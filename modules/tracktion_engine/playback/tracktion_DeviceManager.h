@@ -67,6 +67,15 @@ public:
     // the processing will be muted to keep the system running. Defaults to 0.98
     void setCpuLimitBeforeMuting (double newLimit)      { jassert (newLimit > 0); cpuLimitBeforeMuting = newLimit; }
 
+   #if JUCE_ANDROID
+    /** Enable/disable steady CPU load padding (burns CPU cycles to prevent thread deprioritization) */
+    void setSteadyLoadEnabled (bool shouldBeEnabled)    { steadyLoadContext.setEnabled (shouldBeEnabled); }
+    bool isSteadyLoadEnabled() const                    { return steadyLoadContext.isEnabled(); }
+    /** Set/get the target CPU load level (0.0 to 1.0, e.g., 0.6 = 60%) */
+    void setSteadyLoadLevel (float level)               { steadyLoadContext.setLoadLevel (level); }
+    float getSteadyLoadLevel() const                    { return steadyLoadContext.getLoadLevel(); }
+   #endif
+
     PerformanceMeasurement::Statistics getCPUStatistics() const;
     void restCPUStatistics();
 

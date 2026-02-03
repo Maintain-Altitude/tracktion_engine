@@ -48,15 +48,31 @@ public:
             ignoreCounter = newValue;
         }
 
+        void setEnabled (bool shouldBeEnabled) noexcept
+        {
+            enabled = shouldBeEnabled;
+        }
+
+        bool isEnabled() const noexcept
+        {
+            return enabled;
+        }
+
+        float getLoadLevel() const noexcept
+        {
+            return loadLevel;
+        }
+
     private:
         friend class ScopedSteadyLoad;
 
         double sampleRateHz       { 0.0 };
         int64_t callbackEpoch     { 0 };
-        float loadLevel         { 0.8f };
+        float loadLevel         { 0.6f };  // Target 60% total CPU (real work + padding)
         int numNopsPerIteration { 10000 };
         int callbackCount       { 0 };
         int ignoreCounter       { 4 };
+        bool enabled            { true };
 
         int64_t getCallbackPeriod (int bufferSize) const noexcept
         {
@@ -70,7 +86,7 @@ public:
     ScopedSteadyLoad (Context& contextToUse, int bufferSize)
         : context (contextToUse)
     {
-        if (context.ignoreCounter > 0)
+        if (! context.enabled || context.ignoreCounter > 0)
             return;
 
         if (context.callbackCount == 0)
@@ -104,7 +120,7 @@ public:
 
     ~ScopedSteadyLoad()
     {
-        if (context.ignoreCounter > 0)
+        if (! context.enabled || context.ignoreCounter > 0)
         {
             --context.ignoreCounter;
             return;

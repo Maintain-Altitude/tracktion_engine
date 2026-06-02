@@ -20,7 +20,7 @@ struct SamplerPlugin::SampledNote   : public ReferenceCountedObject
 public:
     SampledNote (int midiNote, int keyNote,
                  float velocity,
-                 const AudioFile& file,
+                 double sourceSampleRate,
                  double sampleRate,
                  int sampleDelayFromBufferStart,
                  const juce::AudioBuffer<float>& data,
@@ -41,7 +41,7 @@ public:
 
         const double hz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
         playbackRatio = hz / juce::MidiMessage::getMidiNoteInHertz (keyNote);
-        playbackRatio *= file.getSampleRate() / sampleRate;
+        playbackRatio *= sourceSampleRate / sampleRate;
         samplesLeftToPlay = playbackRatio > 0 ? (1 + (int) (lengthInSamples / playbackRatio)) : 0;
     }
 
@@ -178,49 +178,55 @@ void SamplerPlugin::handleAsyncUpdate()
     {
         auto v = getSound (i);
 
-        if (v.hasType (IDs::SOUND))
+        if (! v.hasType (IDs::SOUND))
+            continue;
+
+        const auto   src = v[IDs::source].toString();
+        const double st  = static_cast<double> (v[IDs::startTime]);
+        const double len = static_cast<double> (v[IDs::length]);
+
+        // If an already-loaded sound has the same source and requested excerpt, move it
+        // into the new list instead of re-reading the sample. This avoids reloading every
+        // sound whenever the state changes, and a reused sound never touches its source
+        // file again.
+        SamplerSound* s = nullptr;
+
+        for (int j = 0; j < soundList.size(); ++j)
         {
-            auto s = new SamplerSound (*this,
-                                       v[IDs::source].toString(),
-                                       v[IDs::name],
-                                       v[IDs::startTime],
-                                       v[IDs::length],
-                                       v[IDs::gainDb]);
+            auto* existing = soundList.getUnchecked (j);
 
-            s->keyNote      = juce::jlimit (0, 127, static_cast<int> (v[IDs::keyNote]));
-            s->minNote      = juce::jlimit (0, 127, static_cast<int> (v[IDs::minNote]));
-            s->maxNote      = juce::jlimit (0, 127, static_cast<int> (v[IDs::maxNote]));
-            s->pan          = juce::jlimit (-1.0f, 1.0f, static_cast<float> (v[IDs::pan]));
-            s->openEnded    = v[IDs::openEnded];
-
-            newSounds.add (s);
-        }
-    }
-
-    for (auto newSound : newSounds)
-    {
-        for (auto s : soundList)
-        {
-            if (s->source == newSound->source
-                && s->startTime == newSound->startTime
-                && s->length == newSound->length)
+            if (existing->sampleDataLoaded
+                 && existing->source == src
+                 && existing->requestedStartTime == st
+                 && existing->requestedLength == len)
             {
-                newSound->audioFile = s->audioFile;
-                newSound->fileStartSample = s->fileStartSample;
-                newSound->fileLengthSamples = s->fileLengthSamples;
-                newSound->audioData = s->audioData;
+                s = soundList.removeAndReturn (j);
+                break;
             }
         }
+
+        if (s == nullptr)
+            s = new SamplerSound (*this, src, v[IDs::name], st, len, v[IDs::gainDb]);
+
+        // Refresh the properties that don't require a reload (harmless for new sounds).
+        s->name      = v[IDs::name];
+        s->gainDb    = juce::jlimit (-48.0f, 48.0f, static_cast<float> (v[IDs::gainDb]));
+        s->keyNote   = juce::jlimit (0, 127, static_cast<int> (v[IDs::keyNote]));
+        s->minNote   = juce::jlimit (0, 127, static_cast<int> (v[IDs::minNote]));
+        s->maxNote   = juce::jlimit (0, 127, static_cast<int> (v[IDs::maxNote]));
+        s->pan       = juce::jlimit (-1.0f, 1.0f, static_cast<float> (v[IDs::pan]));
+        s->openEnded = v[IDs::openEnded];
+
+        newSounds.add (s);
     }
 
     {
         const juce::ScopedLock sl (lock);
         allNotesOff();
         soundList.swapWith (newSounds);
-
-        sourceMediaChanged();
     }
 
+    // newSounds now holds the previous sounds that weren't reused; clearing deletes them.
     newSounds.clear();
     changed();
 }
@@ -258,13 +264,13 @@ void SamplerPlugin::playNotes (const juce::BigInteger& keysDown)
                     if (ss->minNote <= note
                          && ss->maxNote >= note
                          && ss->audioData.getNumSamples() > 0
-                         && (! ss->audioFile.isNull())
+                         && ss->sourceSampleRate > 0.0
                          && playingNotes.size() < maximumSimultaneousNotes)
                     {
                         playingNotes.add (new SampledNote (note,
                                                            ss->keyNote,
                                                            0.75f,
-                                                           ss->audioFile,
+                                                           ss->sourceSampleRate,
                                                            sampleRate,
                                                            0,
                                                            ss->audioData,
@@ -329,6 +335,7 @@ void SamplerPlugin::applyToBuffer (const PluginRenderContext& fc)
                         if (ss->minNote <= note
                             && ss->maxNote >= note
                             && ss->audioData.getNumSamples() > 0
+                            && ss->sourceSampleRate > 0.0
                             && playingNotes.size() < maximumSimultaneousNotes)
                         {
                             highlightedNotes.setBit (note);
@@ -336,7 +343,7 @@ void SamplerPlugin::applyToBuffer (const PluginRenderContext& fc)
                             playingNotes.add (new SampledNote (note,
                                                                ss->keyNote,
                                                                m.getVelocity() / 127.0f,
-                                                               ss->audioFile,
+                                                               ss->sourceSampleRate,
                                                                sampleRate,
                                                                noteTimeSample,
                                                                ss->audioData,
@@ -626,6 +633,8 @@ SamplerPlugin::SamplerSound::SamplerSound (SamplerPlugin& sf,
       gainDb (juce::jlimit (-48.0f, 48.0f, gainDb_)),
       startTime (startTime_),
       length (length_),
+      requestedStartTime (startTime_),
+      requestedLength (length_),
       audioFile (owner.edit.engine, SourceFileReference::findFileFromString (owner.edit, source))
 {
     setExcerpt (startTime_, length_);
@@ -643,6 +652,8 @@ void SamplerPlugin::SamplerSound::setExcerpt (double startTime_, double length_)
 {
     CRASH_TRACER
 
+    sampleDataLoaded = false;
+
     if (! audioFile.isValid())
     {
         audioFile = AudioFile (owner.edit.engine, SourceFileReference::findFileFromString (owner.edit, source));
@@ -655,7 +666,10 @@ void SamplerPlugin::SamplerSound::setExcerpt (double startTime_, double length_)
 
     if (audioFile.isValid())
     {
-        const double minLength = 32.0 / audioFile.getSampleRate();
+        // Cache the source sample rate so playback never has to query the AudioFile.
+        sourceSampleRate = audioFile.getSampleRate();
+
+        const double minLength = 32.0 / sourceSampleRate;
 
         startTime = juce::jlimit (0.0, audioFile.getLength() - minLength, startTime_);
 
@@ -664,8 +678,8 @@ void SamplerPlugin::SamplerSound::setExcerpt (double startTime_, double length_)
         else
             length = audioFile.getLength();
 
-        fileStartSample   = juce::roundToInt (startTime * audioFile.getSampleRate());
-        fileLengthSamples = juce::roundToInt (length * audioFile.getSampleRate());
+        fileStartSample   = juce::roundToInt (startTime * sourceSampleRate);
+        fileLengthSamples = juce::roundToInt (length * sourceSampleRate);
 
         if (auto reader = owner.engine.getAudioFileManager().cache.createReader (audioFile))
         {
@@ -692,6 +706,8 @@ void SamplerPlugin::SamplerSound::setExcerpt (double startTime_, double length_)
                 offset += numThisTime;
                 total -= numThisTime;
             }
+
+            sampleDataLoaded = true;
         }
         else
         {

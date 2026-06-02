@@ -93,6 +93,12 @@ public:
         bool openEnded = false;
         float gainDb = 0, pan = 0;
         double startTime = 0, length = 0;
+        // The originally-requested (un-clamped) excerpt, used to recognise an unchanged
+        // sound when the sound list is rebuilt so its loaded data can be reused.
+        double requestedStartTime = 0, requestedLength = 0;
+        // Cached at load time so playback doesn't need to query the source AudioFile.
+        double sourceSampleRate = 0;
+        bool sampleDataLoaded = false;
         AudioFile audioFile;
         juce::AudioBuffer<float> audioData { 2, 64 };
 

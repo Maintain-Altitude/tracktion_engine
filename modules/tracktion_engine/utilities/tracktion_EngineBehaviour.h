@@ -19,7 +19,7 @@ struct EditLimits
     int maxNumTracks = 400;        /**< The maximum number of Track[s] an Edit can contain. */
     int maxClipsInTrack = 1500;    /**< The maximum number of Clip[s] a Track can contain. */
     int maxPluginsOnClip = 5;      /**< The maximum number of Plugin[s] a Clip can contain. */
-    int maxPluginsOnTrack = 16;    /**< The maximum number of Plugin[s] a Track can contain. */
+    int maxPluginsOnTrack = 18;    /**< The maximum number of Plugin[s] a Track can contain. (LoopDrop patch: upstream default 16; raised to 18 to fit the maximum-authored 17 dynamic plugins per stem track plus a margin of 1. See CLAUDE.md "Tracktion Engine Customizations".) */
     int maxNumMasterPlugins = 4;   /**< The maximum number of master Plugin[s] and Edit can contain. */
 };
 

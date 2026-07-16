@@ -244,6 +244,19 @@ public:
     */
     void editHasChanged();
 
+    //==============================================================================
+    // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
+    // Debug logging hook — set by the engine to route graph-rebuild diagnostics
+    // through the debug buffer, mirroring WrappedProcessorPlugin::debugLog
+    // (tracktion_plugins/base/WrappedProcessorPlugin.h). This module has no
+    // dependency on Source/AudioEngine's logging macros, hence the indirection.
+    using DebugLogFn = void (*)(const char* fmt, ...);
+    static DebugLogFn debugLog;
+
+    /** Graph-rebuild counter/duration since last reset (get-and-reset), counting
+        every editHasChanged() call that reaches ensureContextAllocated(true). */
+    static void getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs);
+
     /** Prevents the nodes being regenerated while one of these exists, e.g. while
         dragging clips around, etc.
     */

@@ -40,6 +40,26 @@ namespace IDs
     #undef DECLARE_ID
 }
 
+//==============================================================================
+// BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
+// See TransportControl::debugLog / getAndResetGraphRebuildStats declarations
+// (tracktion_TransportControl.h) for what these are for.
+TransportControl::DebugLogFn TransportControl::debugLog = nullptr;
+
+namespace
+{
+    std::atomic<int> graphRebuildCount { 0 };
+    std::atomic<double> graphRebuildTotalMs { 0.0 };
+    std::atomic<double> graphRebuildMaxMs { 0.0 };
+}
+
+void TransportControl::getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs)
+{
+    count = graphRebuildCount.exchange (0);
+    totalMs = graphRebuildTotalMs.exchange (0.0);
+    maxMs = graphRebuildMaxMs.exchange (0.0);
+}
+
 namespace TransportHelpers
 {
     inline TimePosition snapTime (TransportControl& tc, TimePosition t, bool invertSnap)
@@ -795,7 +815,22 @@ void TransportControl::editHasChanged()
     if (playbackContext == nullptr)
         return;
 
+    // BSV-2185 instrumentation: time the full-graph rebuild (Static Code Audit
+    // finding #1). ensureContextAllocated(true) is the actual rebuild call —
+    // see [GraphRebuildTrigger] logs elsewhere for which caller triggered it.
+    const auto rebuildStartMs = juce::Time::getMillisecondCounterHiRes();
     ensureContextAllocated (true);
+    const auto durationMs = juce::Time::getMillisecondCounterHiRes() - rebuildStartMs;
+
+    graphRebuildCount.fetch_add (1);
+    graphRebuildTotalMs.fetch_add (durationMs);
+    {
+        double prevMax = graphRebuildMaxMs.load();
+        while (durationMs > prevMax && ! graphRebuildMaxMs.compare_exchange_weak (prevMax, durationMs)) {}
+    }
+    if (debugLog != nullptr)
+        debugLog ("[GraphRebuild] durationMs=%.2f", durationMs);
+
     engine.getExternalControllerManager().updateAllDevices();
 }
 

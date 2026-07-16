@@ -49,6 +49,15 @@ public:
     void flushPendingUpdates();
 
     //==============================================================================
+    // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
+    // Debug logging hook — set by the engine to route lock-wait diagnostics
+    // through the debug buffer, mirroring WrappedProcessorPlugin::debugLog
+    // (tracktion_plugins/base/WrappedProcessorPlugin.h). This module has no
+    // dependency on Source/AudioEngine's logging macros, hence the indirection.
+    using DebugLogFn = void (*)(const char* fmt, ...);
+    static DebugLogFn debugLog;
+
+    //==============================================================================
     static const char* getPluginName()                  { return NEEDS_TRANS("Sampler"); }
     static const char* xmlTypeName;
 

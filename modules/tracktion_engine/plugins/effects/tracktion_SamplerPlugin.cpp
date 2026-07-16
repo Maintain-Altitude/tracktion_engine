@@ -14,6 +14,11 @@ namespace tracktion::inline engine {
 static constexpr int minimumSamplesToPlayWhenStopping = 8;
 static constexpr int maximumSimultaneousNotes = 32;
 
+// BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
+// See SamplerPlugin::debugLog declaration (tracktion_SamplerPlugin.h) for what
+// this is for.
+SamplerPlugin::DebugLogFn SamplerPlugin::debugLog = nullptr;
+
 
 struct SamplerPlugin::SampledNote   : public ReferenceCountedObject
 {
@@ -245,46 +250,62 @@ void SamplerPlugin::deinitialise()
 //==============================================================================
 void SamplerPlugin::playNotes (const juce::BigInteger& keysDown)
 {
-    const juce::ScopedLock sl (lock);
-
-    if (highlightedNotes != keysDown)
+    // BSV-2185 instrumentation: time-to-acquire this lock, which the audio
+    // thread also needs every callback (applyToBuffer) — priority-inversion
+    // risk flagged by the Static Code Audit, never measured before.
+    // [Review fix] The debugLog call MUST happen after `sl` releases the lock,
+    // not while it's still held — logging inside the lock (vsnprintf + emit(),
+    // a blocking fprintf(stderr) syscall on iOS) would extend exactly the
+    // contention window this diagnostic exists to characterize. Measure the
+    // wait, do the real work, let the nested scope release the lock, then log.
+    const auto lockWaitStartMs = juce::Time::getMillisecondCounterHiRes();
+    double lockWaitMs = 0.0;
     {
-        for (int i = playingNotes.size(); --i >= 0;)
-            if ((! keysDown [playingNotes.getUnchecked(i)->note])
-                 && highlightedNotes [playingNotes.getUnchecked(i)->note]
-                 && ! playingNotes.getUnchecked(i)->openEnded)
-                playingNotes.getUnchecked(i)->samplesLeftToPlay = minimumSamplesToPlayWhenStopping;
+        const juce::ScopedLock sl (lock);
+        lockWaitMs = juce::Time::getMillisecondCounterHiRes() - lockWaitStartMs;
 
-        for (int note = 128; --note >= 0;)
+        if (highlightedNotes != keysDown)
         {
-            if (keysDown [note] && ! highlightedNotes [note])
+            for (int i = playingNotes.size(); --i >= 0;)
+                if ((! keysDown [playingNotes.getUnchecked(i)->note])
+                     && highlightedNotes [playingNotes.getUnchecked(i)->note]
+                     && ! playingNotes.getUnchecked(i)->openEnded)
+                    playingNotes.getUnchecked(i)->samplesLeftToPlay = minimumSamplesToPlayWhenStopping;
+
+            for (int note = 128; --note >= 0;)
             {
-                for (auto ss : soundList)
+                if (keysDown [note] && ! highlightedNotes [note])
                 {
-                    if (ss->minNote <= note
-                         && ss->maxNote >= note
-                         && ss->audioData.getNumSamples() > 0
-                         && ss->sourceSampleRate > 0.0
-                         && playingNotes.size() < maximumSimultaneousNotes)
+                    for (auto ss : soundList)
                     {
-                        playingNotes.add (new SampledNote (note,
-                                                           ss->keyNote,
-                                                           0.75f,
-                                                           ss->sourceSampleRate,
-                                                           sampleRate,
-                                                           0,
-                                                           ss->audioData,
-                                                           ss->fileLengthSamples,
-                                                           ss->gainDb,
-                                                           ss->pan,
-                                                           ss->openEnded));
+                        if (ss->minNote <= note
+                             && ss->maxNote >= note
+                             && ss->audioData.getNumSamples() > 0
+                             && ss->sourceSampleRate > 0.0
+                             && playingNotes.size() < maximumSimultaneousNotes)
+                        {
+                            playingNotes.add (new SampledNote (note,
+                                                               ss->keyNote,
+                                                               0.75f,
+                                                               ss->sourceSampleRate,
+                                                               sampleRate,
+                                                               0,
+                                                               ss->audioData,
+                                                               ss->fileLengthSamples,
+                                                               ss->gainDb,
+                                                               ss->pan,
+                                                               ss->openEnded));
+                        }
                     }
                 }
             }
-        }
 
-        highlightedNotes = keysDown;
-    }
+            highlightedNotes = keysDown;
+        }
+    } // sl released here — lock is free before the log call below
+
+    if (debugLog != nullptr)
+        debugLog ("[SfxLockWait] waitMs=%.3f", lockWaitMs);
 }
 
 void SamplerPlugin::allNotesOff()

@@ -48,6 +48,12 @@ public:
     /// If the state has changed and an update is pending, do it synchronously now
     void flushPendingUpdates();
 
+    /** Returns a copy of the currently-held (key-down) notes bitset, under the sampler lock.
+        Added for AudioEngine one-shot SFX: lets the host derive playNotes() bitsets from the
+        sampler's own state instead of maintaining a shadow copy that can go stale when
+        initialise()/deinitialise()/sound-list rebuilds call allNotesOff(). Read-only. */
+    juce::BigInteger getHighlightedNotes() const    { const juce::ScopedLock sl (lock); return highlightedNotes; }
+
     //==============================================================================
     // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
     // Debug logging hook — set by the engine to route lock-wait diagnostics

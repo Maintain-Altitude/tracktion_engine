@@ -257,6 +257,20 @@ public:
         every editHasChanged() call that reaches ensureContextAllocated(true). */
     static void getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs);
 
+    //==============================================================================
+    // BSV-2384 instrumentation: pre-destroy hook for EditPlaybackContext lifetime
+    // safety. Invoked at the very top of freePlaybackContext(), before
+    // playbackContext.reset() runs, with the about-to-be-freed context pointer.
+    // The engine wires this to clear its atomic context-pointer cache (and run
+    // the audioCallbackLock quiescence bracket) so a concurrently-running audio
+    // callback can never dereference a freed EditPlaybackContext. Static/
+    // class-level like debugLog above — this module has no dependency on
+    // Source/AudioEngine, hence the indirection. std::function (not a raw
+    // function pointer like debugLog) because the engine-side handler needs to
+    // capture context (the atomic pointer + lock to bracket).
+    using PreDestroyPlaybackContextFn = std::function<void (EditPlaybackContext*)>;
+    static PreDestroyPlaybackContextFn onPreDestroyPlaybackContext;
+
     /** Prevents the nodes being regenerated while one of these exists, e.g. while
         dragging clips around, etc.
     */

@@ -46,6 +46,10 @@ namespace IDs
 // (tracktion_TransportControl.h) for what these are for.
 TransportControl::DebugLogFn TransportControl::debugLog = nullptr;
 
+// BSV-2384: see TransportControl::onPreDestroyPlaybackContext declaration
+// (tracktion_TransportControl.h) for what this is for.
+TransportControl::PreDestroyPlaybackContextFn TransportControl::onPreDestroyPlaybackContext = nullptr;
+
 namespace
 {
     std::atomic<int> graphRebuildCount { 0 };
@@ -884,6 +888,11 @@ void TransportControl::ensureContextAllocated (bool alwaysReallocate)
 
 void TransportControl::freePlaybackContext()
 {
+    // BSV-2384: notify before teardown starts — the only point at which the
+    // about-to-be-freed context pointer is still valid to hand out.
+    if (onPreDestroyPlaybackContext)
+        onPreDestroyPlaybackContext (playbackContext.get());
+
     playbackContext.reset();
     clearPlayingFlags();
     transportState->playbackContextAllocation = std::max (0, transportState->playbackContextAllocation - 1);

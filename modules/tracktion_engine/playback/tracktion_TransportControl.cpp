@@ -42,9 +42,9 @@ namespace IDs
 
 //==============================================================================
 // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
-// See TransportControl::debugLog / getAndResetGraphRebuildStats declarations
+// See TransportControl::warningLog / getAndResetGraphRebuildStats declarations
 // (tracktion_TransportControl.h) for what these are for.
-TransportControl::DebugLogFn TransportControl::debugLog = nullptr;
+TransportControl::DebugLogFn TransportControl::warningLog = nullptr;
 
 // BSV-2384: see TransportControl::onPreDestroyPlaybackContext declaration
 // (tracktion_TransportControl.h) for what this is for.
@@ -832,8 +832,13 @@ void TransportControl::editHasChanged()
         double prevMax = graphRebuildMaxMs.load();
         while (durationMs > prevMax && ! graphRebuildMaxMs.compare_exchange_weak (prevMax, durationMs)) {}
     }
-    if (debugLog != nullptr)
-        debugLog ("[GraphRebuild] durationMs=%.2f", durationMs);
+
+    // A rebuild during active playback is a defect (BSV-2298) — a minigame's
+    // graph should be built once up front, not mid-song. Load/show-setup
+    // rebuilds happen while stopped and stay silent; only warn for the case
+    // that always means something went wrong.
+    if (warningLog != nullptr && isPlaying())
+        warningLog ("[GraphRebuild] durationMs=%.2f", durationMs);
 
     engine.getExternalControllerManager().updateAllDevices();
 }

@@ -246,12 +246,15 @@ public:
 
     //==============================================================================
     // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
-    // Debug logging hook — set by the engine to route graph-rebuild diagnostics
-    // through the debug buffer, mirroring WrappedProcessorPlugin::debugLog
-    // (tracktion_plugins/base/WrappedProcessorPlugin.h). This module has no
-    // dependency on Source/AudioEngine's logging macros, hence the indirection.
+    // Warning-tier logging hook — set by the engine to route graph-rebuild
+    // diagnostics through the debug buffer, mirroring
+    // WrappedProcessorPlugin::errorLog (tracktion_plugins/base/WrappedProcessorPlugin.h).
+    // This module has no dependency on Source/AudioEngine's logging macros, hence
+    // the indirection. A rebuild during active playback is a defect (BSV-2298) —
+    // load/show-setup rebuilds don't call this (see editHasChanged()'s isPlaying()
+    // gate), so any line through this hook always means "this shouldn't have happened."
     using DebugLogFn = void (*)(const char* fmt, ...);
-    static DebugLogFn debugLog;
+    static DebugLogFn warningLog;
 
     /** Graph-rebuild counter/duration since last reset (get-and-reset), counting
         every editHasChanged() call that reaches ensureContextAllocated(true). */

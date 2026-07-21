@@ -256,6 +256,21 @@ public:
     using DebugLogFn = void (*)(const char* fmt, ...);
     static DebugLogFn warningLog;
 
+    // F6a (Log-Message-Audit, 2026-07-21): identity marker for the main music
+    // edit, published by AudioEngine (see AudioEngine.cpp, wherever pImpl->edit
+    // is (re)assigned) so editHasChanged() can tell which edit it's running on
+    // without depending on Source/AudioEngine, same indirection style as
+    // warningLog above. Purely additive — does NOT touch playInStopEnabled or
+    // any existing recovery-path behaviour (BSV-2369). `playInStopEnabled`
+    // looked like a usable SFX-edit marker but isn't: AudioEnginePlayback.cpp's
+    // prepareForPlayback() sets it true on the MAIN edit too ("so the graph
+    // renders during allocation") and never resets it, so it reads true for
+    // both edits well before any real playback — using it here silently
+    // suppressed the warning for genuine main-edit BSV-2298 rebuilds too
+    // (caught via Editor log: identical minigame loop warned pre-fix, silent
+    // post-fix). Compare by identity instead.
+    static const Edit* mainMusicEdit;
+
     /** Graph-rebuild counter/duration since last reset (get-and-reset), counting
         every editHasChanged() call that reaches ensureContextAllocated(true). */
     static void getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs);

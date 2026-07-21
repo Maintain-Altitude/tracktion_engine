@@ -46,6 +46,10 @@ namespace IDs
 // (tracktion_TransportControl.h) for what these are for.
 TransportControl::DebugLogFn TransportControl::warningLog = nullptr;
 
+// F6a: see TransportControl::mainMusicEdit declaration (tracktion_TransportControl.h)
+// for what this is for.
+const Edit* TransportControl::mainMusicEdit = nullptr;
+
 // BSV-2384: see TransportControl::onPreDestroyPlaybackContext declaration
 // (tracktion_TransportControl.h) for what this is for.
 TransportControl::PreDestroyPlaybackContextFn TransportControl::onPreDestroyPlaybackContext = nullptr;
@@ -838,14 +842,16 @@ void TransportControl::editHasChanged()
     // rebuilds happen while stopped and stay silent; only warn for the case
     // that always means something went wrong.
     //
-    // Exclude edits with playInStopEnabled (the SFX edit — see
-    // AudioEngine::initializeSoundEffects) — that flag exists specifically to
-    // keep the transport reporting "active" even at rest, so isPlaying() is
-    // effectively always true for it and every SFX-edit rebuild would
-    // otherwise false-positive as a BSV-2298 defect (confirmed empirically,
-    // Log-Message-Audit review 2026-07-20: 3 of 9 warnings in one test session
-    // fired during pure cold-boot SFX setup, before real playback ever started).
-    if (warningLog != nullptr && isPlaying() && ! edit.playInStopEnabled)
+    // Only warn for the main music edit, not the SFX edit (identity check via
+    // mainMusicEdit — see its declaration in the header). playInStopEnabled
+    // was tried first and reverted: it's not a valid SFX-edit marker, since
+    // AudioEnginePlayback.cpp's prepareForPlayback() also sets it true on the
+    // MAIN edit ("so the graph renders during allocation") and never resets
+    // it, so it read true for both edits well before real playback — which
+    // silently suppressed genuine main-edit BSV-2298 warnings too (caught via
+    // Editor log, 2026-07-21: an identical minigame load warned before that
+    // fix and stayed silent after it).
+    if (warningLog != nullptr && isPlaying() && &edit == mainMusicEdit)
         warningLog ("[GraphRebuild] durationMs=%.2f", durationMs);
 
     engine.getExternalControllerManager().updateAllDevices();

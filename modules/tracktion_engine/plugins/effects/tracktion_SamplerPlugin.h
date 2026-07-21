@@ -54,6 +54,15 @@ public:
         initialise()/deinitialise()/sound-list rebuilds call allNotesOff(). Read-only. */
     juce::BigInteger getHighlightedNotes() const    { const juce::ScopedLock sl (lock); return highlightedNotes; }
 
+    /** BSV-2394: when true, this sampler ignores the track-MIDI all-notes-off flag in
+        applyToBuffer (which Tracktion raises edit-wide on transport stop/start/reposition).
+        The SFX one-shot samplers are driven by direct playNotes(), not the timeline, so a
+        looping-clip transport discontiguity on the shared sfxEdit must not clear their live
+        voices. Does NOT affect the explicit allNotesOff() method (still honoured for
+        StopAllSoundEffects / LoadSoundBank / initialise / deinitialise). Set once at SFX
+        setup before playback; synchronised via the sampler lock. */
+    void setIgnoreTransportAllNotesOff (bool shouldIgnore)  { const juce::ScopedLock sl (lock); ignoreTransportAllNotesOff = shouldIgnore; }
+
     //==============================================================================
     // BSV-2185 instrumentation: diagnostic-only, no runtime-behaviour change.
     // Debug logging hook — set by the engine to route lock-wait diagnostics
@@ -130,6 +139,7 @@ private:
     juce::ReferenceCountedArray<SampledNote> playingNotes;
     juce::OwnedArray<SamplerSound> soundList;
     juce::BigInteger highlightedNotes;
+    bool ignoreTransportAllNotesOff = false;   // BSV-2394 — see setIgnoreTransportAllNotesOff
 
     juce::ValueTree getSound (int index) const;
 

@@ -327,7 +327,7 @@ void SamplerPlugin::applyToBuffer (const PluginRenderContext& fc)
 
         if (fc.bufferForMidiMessages != nullptr)
         {
-            if (fc.bufferForMidiMessages->isAllNotesOff)
+            if (fc.bufferForMidiMessages->isAllNotesOff && ! ignoreTransportAllNotesOff)
             {
                 playingNotes.clear();
                 highlightedNotes.clear();

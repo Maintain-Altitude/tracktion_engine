@@ -256,6 +256,12 @@ public:
     using DebugLogFn = void (*)(const char* fmt, ...);
     static DebugLogFn warningLog;
 
+    // BSV-2473 step 0 (review finding 1): info-tier counterpart to warningLog
+    // above, mirroring SamplerPlugin::debugLog. Routine rebuild-request/flush/
+    // dispatch diagnostics use this (no stack trace, no "[W] " severity) — only
+    // an actual gameplay rebuild belongs on warningLog.
+    static DebugLogFn debugLog;
+
     // F6a (Log-Message-Audit, 2026-07-21): identity marker for the main music
     // edit, published by AudioEngine (see AudioEngine.cpp, wherever pImpl->edit
     // is (re)assigned) so editHasChanged() can tell which edit it's running on
@@ -274,6 +280,16 @@ public:
     /** Graph-rebuild counter/duration since last reset (get-and-reset), counting
         every editHasChanged() call that reaches ensureContextAllocated(true). */
     static void getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs);
+
+    /** BSV-2473 step 0 (review finding 2): count of restartPlayback() calls the
+        [RebuildRequest]/[RebuildFlush]/[RebuildDispatch] gate suppressed because
+        they weren't for mainMusicEdit — a one-off check that nothing interesting
+        is hiding in the (unlogged) SFX-edit rebuild traffic. */
+    static int getAndResetSuppressedNonMainEditRebuildRequests();
+
+    /** Increments the counter above. Called from Edit::restartPlayback() (a
+        different translation unit), hence the setter rather than a raw member. */
+    static void noteSuppressedNonMainEditRebuildRequest();
 
     //==============================================================================
     // BSV-2384 instrumentation: pre-destroy hook for EditPlaybackContext lifetime

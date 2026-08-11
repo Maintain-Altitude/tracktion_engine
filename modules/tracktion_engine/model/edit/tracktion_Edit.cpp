@@ -1220,10 +1220,19 @@ bool Edit::hasChangedSinceSaved() const
 
 void Edit::restartPlayback()
 {
-    // BSV-2473 step 0: stamps the request moment; flagWasArmed=1 is the stale-arm case.
-    if (TransportControl::warningLog != nullptr)
-        TransportControl::warningLog ("[RebuildRequest] shouldPlay=%d flagWasArmed=%d",
-                                       shouldPlay() ? 1 : 0, shouldRestartPlayback ? 1 : 0);
+    // BSV-2473 step 0 (review findings 1, 2, 4): main-edit only, info-tier (no
+    // stack trace); flagWasArmed pairs with the armedAgeMs printed at the flush.
+    const bool flagWasArmed = shouldRestartPlayback;
+
+    if (this == TransportControl::mainMusicEdit)
+    {
+        if (TransportControl::debugLog != nullptr)
+            TransportControl::debugLog ("[RebuildRequest] shouldPlay=%d flagWasArmed=%d",
+                                         shouldPlay() ? 1 : 0, flagWasArmed ? 1 : 0);
+
+        if (! flagWasArmed)
+            rebuildArmedAtMs = juce::Time::getMillisecondCounterHiRes();
+    }
 
     shouldRestartPlayback = true;
 
@@ -1824,20 +1833,24 @@ void Edit::timerCallback()
 
     if (shouldRestartPlayback)
     {
-        // BSV-2473 step 0: pairs with restartPlayback()'s [RebuildRequest] stamp.
+        // BSV-2473 step 0 (review findings 1-4): pairs with restartPlayback()'s
+        // [RebuildRequest]; armedAgeMs tests the theory-(i) stale-arm hypothesis directly.
+        const bool logThisEdit = this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr;
+
         if (shouldPlay())
         {
-            if (TransportControl::warningLog != nullptr)
-                TransportControl::warningLog ("[RebuildFlush] result=flushed");
+            if (logThisEdit)
+                TransportControl::debugLog ("[RebuildFlush] result=flushed armedAgeMs=%.1f",
+                                             juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs);
 
             shouldRestartPlayback = false;
             parameterControlMappings->checkForDeletedParams();
 
             getTransport().editHasChanged();
         }
-        else if (TransportControl::warningLog != nullptr)
+        else if (logThisEdit)
         {
-            TransportControl::warningLog ("[RebuildFlush] result=skipped-stale-arm");
+            TransportControl::debugLog ("[RebuildFlush] result=skipped-not-playing");
         }
     }
 

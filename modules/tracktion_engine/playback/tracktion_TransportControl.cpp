@@ -46,6 +46,10 @@ namespace IDs
 // (tracktion_TransportControl.h) for what these are for.
 TransportControl::DebugLogFn TransportControl::warningLog = nullptr;
 
+// BSV-2473 step 0 (review finding 1): see TransportControl::debugLog declaration
+// (tracktion_TransportControl.h) for what this is for.
+TransportControl::DebugLogFn TransportControl::debugLog = nullptr;
+
 // F6a: see TransportControl::mainMusicEdit declaration (tracktion_TransportControl.h)
 // for what this is for.
 const Edit* TransportControl::mainMusicEdit = nullptr;
@@ -59,6 +63,7 @@ namespace
     std::atomic<int> graphRebuildCount { 0 };
     std::atomic<double> graphRebuildTotalMs { 0.0 };
     std::atomic<double> graphRebuildMaxMs { 0.0 };
+    std::atomic<int> suppressedNonMainEditRebuildRequests { 0 };
 }
 
 void TransportControl::getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs)
@@ -66,6 +71,16 @@ void TransportControl::getAndResetGraphRebuildStats (int& count, double& totalMs
     count = graphRebuildCount.exchange (0);
     totalMs = graphRebuildTotalMs.exchange (0.0);
     maxMs = graphRebuildMaxMs.exchange (0.0);
+}
+
+int TransportControl::getAndResetSuppressedNonMainEditRebuildRequests()
+{
+    return suppressedNonMainEditRebuildRequests.exchange (0);
+}
+
+void TransportControl::noteSuppressedNonMainEditRebuildRequest()
+{
+    suppressedNonMainEditRebuildRequests.fetch_add (1);
 }
 
 namespace TransportHelpers
@@ -812,9 +827,18 @@ TransportControl::PlayingFlag::~PlayingFlag() noexcept                          
 //==============================================================================
 void TransportControl::editHasChanged()
 {
-    // BSV-2473 step 0: viaDelayedFlush=1 means this class's own reallocation-inhibitor deferral is flushing.
-    if (warningLog != nullptr)
-        warningLog ("[RebuildDispatch] viaDelayedFlush=%d", isDelayedChangePending ? 1 : 0);
+    // BSV-2473 step 0 (review findings 2 + 5): pendingOnEntry=1 means an earlier
+    // call already deferred (this call may defer again if inhibitors are still held).
+    if (&edit == mainMusicEdit)
+    {
+        if (debugLog != nullptr)
+            debugLog ("[RebuildDispatch] pendingOnEntry=%d inhibitors=%d",
+                       isDelayedChangePending ? 1 : 0, transportState->reallocationInhibitors);
+    }
+    else
+    {
+        noteSuppressedNonMainEditRebuildRequest();
+    }
 
     if (transportState->reallocationInhibitors > 0)
     {
@@ -826,6 +850,9 @@ void TransportControl::editHasChanged()
 
     if (playbackContext == nullptr)
         return;
+
+    if (debugLog != nullptr && &edit == mainMusicEdit)
+        debugLog ("[RebuildDispatch] result=proceeding");
 
     // BSV-2185 instrumentation: time the full-graph rebuild (Static Code Audit
     // finding #1). ensureContextAllocated(true) is the actual rebuild call —

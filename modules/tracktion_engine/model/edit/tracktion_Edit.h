@@ -905,6 +905,7 @@ private:
     std::atomic<bool> isLoadInProgress { true };
     std::atomic<int> performingRenderCount { 0 };
     bool shouldRestartPlayback = false;
+    double rebuildArmedAtMs = 0.0;  // BSV-2473 step 0 (review finding 4): stamped when shouldRestartPlayback arms.
     bool blinkBright = false;
     bool lowLatencyMonitoring = false;
     bool latencyCompensationEnabled = true;

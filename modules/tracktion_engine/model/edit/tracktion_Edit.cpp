@@ -1220,19 +1220,18 @@ bool Edit::hasChangedSinceSaved() const
 
 void Edit::restartPlayback()
 {
-    // BSV-2473 step 0 (review findings 1, 2, 4): main-edit only, info-tier (no
-    // stack trace); flagWasArmed pairs with the armedAgeMs printed at the flush.
+    // BSV-2473 step 0 (delta finding 2): shouldPlay() is edit-role-based (always
+    // true for our forEditing edit) — flagWasArmed/armedAgeMs measure same-1ms-
+    // tick coalescing, not a stopped-period stale arm. Stamped unconditionally,
+    // not gated to mainMusicEdit — mainMusicEdit publishes after an edit can
+    // first arm, so gating the stamp left a live-zero sentinel bug.
     const bool flagWasArmed = shouldRestartPlayback;
 
-    if (this == TransportControl::mainMusicEdit)
-    {
-        if (TransportControl::debugLog != nullptr)
-            TransportControl::debugLog ("[RebuildRequest] shouldPlay=%d flagWasArmed=%d",
-                                         shouldPlay() ? 1 : 0, flagWasArmed ? 1 : 0);
+    if (! flagWasArmed)
+        rebuildArmedAtMs = juce::Time::getMillisecondCounterHiRes();
 
-        if (! flagWasArmed)
-            rebuildArmedAtMs = juce::Time::getMillisecondCounterHiRes();
-    }
+    if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
+        TransportControl::debugLog ("[RebuildRequest] flagWasArmed=%d", flagWasArmed ? 1 : 0);
 
     shouldRestartPlayback = true;
 
@@ -1831,27 +1830,18 @@ void Edit::timerCallback()
     if (! isFullyConstructed.load (std::memory_order_relaxed))
         return;
 
-    if (shouldRestartPlayback)
+    if (shouldRestartPlayback && shouldPlay())
     {
-        // BSV-2473 step 0 (review findings 1-4): pairs with restartPlayback()'s
-        // [RebuildRequest]; armedAgeMs tests the theory-(i) stale-arm hypothesis directly.
-        const bool logThisEdit = this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr;
+        // BSV-2473 step 0 (delta finding 2): armedAgeMs pairs with restartPlayback()'s
+        // [RebuildRequest] — bounds same-tick coalescing (shouldPlay() is always true here).
+        if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
+            TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f",
+                                         juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs);
 
-        if (shouldPlay())
-        {
-            if (logThisEdit)
-                TransportControl::debugLog ("[RebuildFlush] result=flushed armedAgeMs=%.1f",
-                                             juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs);
+        shouldRestartPlayback = false;
+        parameterControlMappings->checkForDeletedParams();
 
-            shouldRestartPlayback = false;
-            parameterControlMappings->checkForDeletedParams();
-
-            getTransport().editHasChanged();
-        }
-        else if (logThisEdit)
-        {
-            TransportControl::debugLog ("[RebuildFlush] result=skipped-not-playing");
-        }
+        getTransport().editHasChanged();
     }
 
     stopTimer();

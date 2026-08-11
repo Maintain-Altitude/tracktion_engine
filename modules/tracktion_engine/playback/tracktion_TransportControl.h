@@ -281,15 +281,11 @@ public:
         every editHasChanged() call that reaches ensureContextAllocated(true). */
     static void getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs);
 
-    /** BSV-2473 step 0 (review finding 2): count of restartPlayback() calls the
-        [RebuildRequest]/[RebuildFlush]/[RebuildDispatch] gate suppressed because
-        they weren't for mainMusicEdit — a one-off check that nothing interesting
-        is hiding in the (unlogged) SFX-edit rebuild traffic. */
-    static int getAndResetSuppressedNonMainEditRebuildRequests();
-
-    /** Increments the counter above. Called from Edit::restartPlayback() (a
-        different translation unit), hence the setter rather than a raw member. */
-    static void noteSuppressedNonMainEditRebuildRequest();
+    /** BSV-2473 step 0 (delta finding 3): count of editHasChanged() dispatches
+        for an edit other than mainMusicEdit (get-and-reset) — a one-off check
+        that nothing interesting is hiding in the (unlogged) SFX-edit dispatch
+        traffic. Logged by the engine at each LoadEdit swap (AudioEngine.cpp). */
+    static int getAndResetNonMainEditDispatches();
 
     //==============================================================================
     // BSV-2384 instrumentation: pre-destroy hook for EditPlaybackContext lifetime

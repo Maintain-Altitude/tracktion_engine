@@ -63,7 +63,7 @@ namespace
     std::atomic<int> graphRebuildCount { 0 };
     std::atomic<double> graphRebuildTotalMs { 0.0 };
     std::atomic<double> graphRebuildMaxMs { 0.0 };
-    std::atomic<int> suppressedNonMainEditRebuildRequests { 0 };
+    std::atomic<int> nonMainEditDispatchCount { 0 };
 }
 
 void TransportControl::getAndResetGraphRebuildStats (int& count, double& totalMs, double& maxMs)
@@ -73,14 +73,9 @@ void TransportControl::getAndResetGraphRebuildStats (int& count, double& totalMs
     maxMs = graphRebuildMaxMs.exchange (0.0);
 }
 
-int TransportControl::getAndResetSuppressedNonMainEditRebuildRequests()
+int TransportControl::getAndResetNonMainEditDispatches()
 {
-    return suppressedNonMainEditRebuildRequests.exchange (0);
-}
-
-void TransportControl::noteSuppressedNonMainEditRebuildRequest()
-{
-    suppressedNonMainEditRebuildRequests.fetch_add (1);
+    return nonMainEditDispatchCount.exchange (0);
 }
 
 namespace TransportHelpers
@@ -837,7 +832,7 @@ void TransportControl::editHasChanged()
     }
     else
     {
-        noteSuppressedNonMainEditRebuildRequest();
+        nonMainEditDispatchCount.fetch_add (1);
     }
 
     if (transportState->reallocationInhibitors > 0)

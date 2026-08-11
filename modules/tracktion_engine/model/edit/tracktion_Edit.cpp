@@ -1220,18 +1220,16 @@ bool Edit::hasChangedSinceSaved() const
 
 void Edit::restartPlayback()
 {
-    // BSV-2473 step 0 (delta finding 2): shouldPlay() is edit-role-based (always
-    // true for our forEditing edit) — flagWasArmed/armedAgeMs measure same-1ms-
-    // tick coalescing, not a stopped-period stale arm. Stamped unconditionally,
-    // not gated to mainMusicEdit — mainMusicEdit publishes after an edit can
-    // first arm, so gating the stamp left a live-zero sentinel bug.
-    const bool flagWasArmed = shouldRestartPlayback;
-
-    if (! flagWasArmed)
+    // BSV-2473 step 0 (hardening): counts, doesn't log per call — show-setup
+    // bursts hit 345 requests in one frame, which would flood the 32 KB debug
+    // buffer (silent-drop-when-full, AudioEngine.cpp). See timerCallback()'s
+    // [RebuildFlush] requests=%d for the reported total. Stamped unconditionally
+    // (not gated to mainMusicEdit — mainMusicEdit publishes after an edit can
+    // first arm, so gating the stamp left a live-zero sentinel bug, finding 2).
+    if (! shouldRestartPlayback)
         rebuildArmedAtMs = juce::Time::getMillisecondCounterHiRes();
 
-    if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
-        TransportControl::debugLog ("[RebuildRequest] flagWasArmed=%d", flagWasArmed ? 1 : 0);
+    ++rebuildRequestCount;
 
     shouldRestartPlayback = true;
 
@@ -1832,12 +1830,15 @@ void Edit::timerCallback()
 
     if (shouldRestartPlayback && shouldPlay())
     {
-        // BSV-2473 step 0 (delta finding 2): armedAgeMs pairs with restartPlayback()'s
-        // [RebuildRequest] — bounds same-tick coalescing (shouldPlay() is always true here).
+        // BSV-2473 step 0 (hardening + delta finding 2): requests= is the coalesced
+        // count from restartPlayback(); armedAgeMs bounds same-tick coalescing
+        // (shouldPlay() is always true here, see finding 2).
         if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
-            TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f",
-                                         juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs);
+            TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f requests=%d",
+                                         juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs,
+                                         rebuildRequestCount);
 
+        rebuildRequestCount = 0;
         shouldRestartPlayback = false;
         parameterControlMappings->checkForDeletedParams();
 

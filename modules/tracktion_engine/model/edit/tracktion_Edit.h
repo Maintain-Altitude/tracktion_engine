@@ -906,6 +906,7 @@ private:
     std::atomic<int> performingRenderCount { 0 };
     bool shouldRestartPlayback = false;
     double rebuildArmedAtMs = 0.0;  // BSV-2473 step 0 (review finding 4): stamped when shouldRestartPlayback arms.
+    int rebuildRequestCount = 0;  // BSV-2473 step 0 (hardening): requests coalesced into the pending flush.
     bool blinkBright = false;
     bool lowLatencyMonitoring = false;
     bool latencyCompensationEnabled = true;

@@ -1220,6 +1220,11 @@ bool Edit::hasChangedSinceSaved() const
 
 void Edit::restartPlayback()
 {
+    // BSV-2473 step 0: stamps the request moment; flagWasArmed=1 is the stale-arm case.
+    if (TransportControl::warningLog != nullptr)
+        TransportControl::warningLog ("[RebuildRequest] shouldPlay=%d flagWasArmed=%d",
+                                       shouldPlay() ? 1 : 0, shouldRestartPlayback ? 1 : 0);
+
     shouldRestartPlayback = true;
 
     if (! isTimerRunning())
@@ -1817,12 +1822,23 @@ void Edit::timerCallback()
     if (! isFullyConstructed.load (std::memory_order_relaxed))
         return;
 
-    if (shouldRestartPlayback && shouldPlay())
+    if (shouldRestartPlayback)
     {
-        shouldRestartPlayback = false;
-        parameterControlMappings->checkForDeletedParams();
+        // BSV-2473 step 0: pairs with restartPlayback()'s [RebuildRequest] stamp.
+        if (shouldPlay())
+        {
+            if (TransportControl::warningLog != nullptr)
+                TransportControl::warningLog ("[RebuildFlush] result=flushed");
 
-        getTransport().editHasChanged();
+            shouldRestartPlayback = false;
+            parameterControlMappings->checkForDeletedParams();
+
+            getTransport().editHasChanged();
+        }
+        else if (TransportControl::warningLog != nullptr)
+        {
+            TransportControl::warningLog ("[RebuildFlush] result=skipped-stale-arm");
+        }
     }
 
     stopTimer();

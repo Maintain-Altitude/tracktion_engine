@@ -812,6 +812,10 @@ TransportControl::PlayingFlag::~PlayingFlag() noexcept                          
 //==============================================================================
 void TransportControl::editHasChanged()
 {
+    // BSV-2473 step 0: viaDelayedFlush=1 means this class's own reallocation-inhibitor deferral is flushing.
+    if (warningLog != nullptr)
+        warningLog ("[RebuildDispatch] viaDelayedFlush=%d", isDelayedChangePending ? 1 : 0);
+
     if (transportState->reallocationInhibitors > 0)
     {
         isDelayedChangePending = true;

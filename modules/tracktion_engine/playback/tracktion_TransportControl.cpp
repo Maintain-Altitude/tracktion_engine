@@ -833,7 +833,7 @@ void TransportControl::editHasChanged()
     {
         if (debugLog != nullptr)
             debugLog ("[RebuildDispatch] pendingOnEntry=%d inhibitors=%d",
-                       isDelayedChangePending ? 1 : 0, transportState->reallocationInhibitors);
+                       isDelayedChangePending ? 1 : 0, transportState->reallocationInhibitors.get());
     }
     else
     {

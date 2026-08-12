@@ -97,6 +97,11 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
 
     void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i) override
     {
+        // BSV-2473 step 0b: capture once here, not at each of the ~25 restart() branches
+        // below. Gated so a Release library (debugLog always null) does zero extra work.
+        if (TransportControl::debugLog != nullptr)
+            edit.pendingMutation = { v.getType(), i, false, false, true };
+
         if (v.hasType (IDs::TRANSPORT))
         {
             if (i == IDs::recordPunchInOut)
@@ -305,6 +310,11 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
 
     void childAddedOrRemoved (juce::ValueTree& p, juce::ValueTree& c, bool wasAdded)
     {
+        // BSV-2473 step 0b: capture once here, not at each restart() branch below.
+        // Gated so a Release library (debugLog always null) does zero extra work.
+        if (TransportControl::debugLog != nullptr)
+            edit.pendingMutation = { c.getType(), {}, true, wasAdded, true };
+
         if (c.hasType (IDs::NOTE)
              || c.hasType (IDs::CONTROL)
              || c.hasType (IDs::SYSEX)
@@ -1231,6 +1241,63 @@ void Edit::restartPlayback()
 
     ++rebuildRequestCount;
 
+    // BSV-2473 step 0b: classify this request's trigger — pendingMutation.isSet
+    // means a TreeWatcher callback set it moments ago (this call came from one
+    // of its ~25 restart() branches); unset means one of the 31 direct callers
+    // elsewhere in this file. Read-and-clear so a later, unrelated direct call
+    // never inherits a stale TreeWatcher context. Gated: Release does zero work.
+    if (TransportControl::debugLog != nullptr)
+    {
+        juce::String cause;
+
+        if (pendingMutation.isSet)
+        {
+            cause = pendingMutation.type.toString();
+
+            if (pendingMutation.isChildEvent)
+                cause << (pendingMutation.wasAdded ? ".child+" : ".child-");
+            else
+                cause << "." << pendingMutation.property.toString();
+        }
+        else
+        {
+            cause = "direct";
+        }
+
+        pendingMutation.isSet = false;
+
+        bool foundExisting = false;
+
+        for (auto& slot : rebuildCauseSlots)
+        {
+            if (slot.count > 0 && slot.label == cause)
+            {
+                ++slot.count;
+                foundExisting = true;
+                break;
+            }
+        }
+
+        if (! foundExisting)
+        {
+            bool foundFreeSlot = false;
+
+            for (auto& slot : rebuildCauseSlots)
+            {
+                if (slot.count == 0)
+                {
+                    slot.label = cause;
+                    slot.count = 1;
+                    foundFreeSlot = true;
+                    break;
+                }
+            }
+
+            if (! foundFreeSlot)
+                ++rebuildCauseOverflowCount;
+        }
+    }
+
     shouldRestartPlayback = true;
 
     if (! isTimerRunning())
@@ -1834,10 +1901,45 @@ void Edit::timerCallback()
         // count from restartPlayback(); armedAgeMs bounds same-tick coalescing
         // (shouldPlay() is always true here, see finding 2).
         if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
-            TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f requests=%d",
-                                         juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs,
-                                         rebuildRequestCount);
+        {
+            // BSV-2473 step 0b: causes= names the ValueTree type/property (or
+            // "direct") behind each coalesced request. Capped at 8 shown + a
+            // "+N more" tail — AudioEngineLog::emit's body is 1024 bytes.
+            juce::String causesStr;
+            int shown = 0, totalActive = 0;
 
+            for (auto& slot : rebuildCauseSlots)
+            {
+                if (slot.count == 0)
+                    continue;
+
+                ++totalActive;
+
+                if (shown < 8)
+                {
+                    if (shown > 0)
+                        causesStr << ",";
+
+                    causesStr << slot.label << ":" << slot.count;
+                    ++shown;
+                }
+            }
+
+            const int moreCount = (totalActive - shown) + rebuildCauseOverflowCount;
+
+            if (moreCount > 0)
+                causesStr << ",+" << moreCount << " more";
+
+            TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f requests=%d causes=%s",
+                                         juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs,
+                                         rebuildRequestCount,
+                                         causesStr.toRawUTF8());
+        }
+
+        for (auto& slot : rebuildCauseSlots)
+            slot.count = 0;
+
+        rebuildCauseOverflowCount = 0;
         rebuildRequestCount = 0;
         shouldRestartPlayback = false;
         parameterControlMappings->checkForDeletedParams();

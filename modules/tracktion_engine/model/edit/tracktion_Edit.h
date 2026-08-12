@@ -907,6 +907,28 @@ private:
     bool shouldRestartPlayback = false;
     double rebuildArmedAtMs = 0.0;  // BSV-2473 step 0 (review finding 4): stamped when shouldRestartPlayback arms.
     int rebuildRequestCount = 0;  // BSV-2473 step 0 (hardening): requests coalesced into the pending flush.
+
+    // BSV-2473 step 0b: set by TreeWatcher::valueTreePropertyChanged/childAddedOrRemoved
+    // at entry (before the ~25-branch dispatch), read-and-cleared by restartPlayback().
+    // Unset at restartPlayback() entry means a direct caller outside the TreeWatcher.
+    struct PendingMutation
+    {
+        juce::Identifier type, property;
+        bool isChildEvent = false, wasAdded = false, isSet = false;
+    };
+    PendingMutation pendingMutation;
+
+    // BSV-2473 step 0b: fixed-capacity, allocation-free-in-Release cause histogram,
+    // accumulated per coalescing window and reported/reset on the flush. Message-
+    // thread only (same assumption as rebuildRequestCount above).
+    struct RebuildCauseSlot
+    {
+        juce::String label;
+        int count = 0;
+    };
+    static constexpr int maxRebuildCauseSlots = 16;
+    RebuildCauseSlot rebuildCauseSlots[maxRebuildCauseSlots];
+    int rebuildCauseOverflowCount = 0;
     bool blinkBright = false;
     bool lowLatencyMonitoring = false;
     bool latencyCompensationEnabled = true;

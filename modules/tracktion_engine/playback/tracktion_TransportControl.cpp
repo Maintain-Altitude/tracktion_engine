@@ -830,8 +830,9 @@ void TransportControl::editHasChanged()
             debugLog ("[RebuildDispatch] pendingOnEntry=%d inhibitors=%d",
                        isDelayedChangePending ? 1 : 0, transportState->reallocationInhibitors.get());
     }
-    else
+    else if (debugLog != nullptr)
     {
+        // BSV-2473 step 0b (residual b): gated so a Release library does zero work.
         nonMainEditDispatchCount.fetch_add (1);
     }
 

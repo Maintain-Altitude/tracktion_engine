@@ -908,9 +908,13 @@ private:
     double rebuildArmedAtMs = 0.0;  // BSV-2473 step 0 (review finding 4): stamped when shouldRestartPlayback arms.
     int rebuildRequestCount = 0;  // BSV-2473 step 0 (hardening): requests coalesced into the pending flush.
 
-    // BSV-2473 step 0b: set by TreeWatcher::valueTreePropertyChanged/childAddedOrRemoved
-    // at entry (before the ~25-branch dispatch), read-and-cleared by restartPlayback().
-    // Unset at restartPlayback() entry means a direct caller outside the TreeWatcher.
+    // BSV-2473 step 0b: RAII-scoped to the dynamic extent of a single
+    // TreeWatcher::valueTreePropertyChanged/childAddedOrRemoved call (delta
+    // finding S0b-1 — isSet must NOT outlive the callback, since most branches
+    // don't call restart(); a bare read-and-clear in restartPlayback() left a
+    // stale context for the next direct caller to inherit). Read by
+    // restartPlayback() only while true, i.e. only when called synchronously
+    // from within one of the ~25 restart() branches below.
     struct PendingMutation
     {
         juce::Identifier type, property;
@@ -918,12 +922,13 @@ private:
     };
     PendingMutation pendingMutation;
 
-    // BSV-2473 step 0b: fixed-capacity, allocation-free-in-Release cause histogram,
-    // accumulated per coalescing window and reported/reset on the flush. Message-
-    // thread only (same assumption as rebuildRequestCount above).
+    // BSV-2473 step 0b (delta S0b-2): keyed on Identifiers (pointer-comparison,
+    // no allocation) rather than a formatted String — the display label is
+    // built only at flush time, for the handful of populated slots.
     struct RebuildCauseSlot
     {
-        juce::String label;
+        juce::Identifier type, property;
+        bool isChildEvent = false, wasAdded = false, isDirect = false;
         int count = 0;
     };
     static constexpr int maxRebuildCauseSlots = 16;

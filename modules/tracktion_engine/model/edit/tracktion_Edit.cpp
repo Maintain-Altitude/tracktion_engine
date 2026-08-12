@@ -95,12 +95,33 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
     Edit& edit;
     juce::ValueTree state;
 
+    // BSV-2473 step 0b (delta S0b-1): scopes Edit::pendingMutation.isSet to this
+    // callback's dynamic extent, so restartPlayback() sees it only when called
+    // synchronously from within (i.e. one of the ~25 restart() branches) —
+    // never left set for a later, unrelated direct caller to misattribute to.
+    struct ScopedPendingMutation
+    {
+        Edit& edit;
+        bool active;
+
+        ScopedPendingMutation (Edit& e, juce::Identifier type, juce::Identifier property,
+                               bool isChildEvent, bool wasAdded)
+            : edit (e), active (TransportControl::debugLog != nullptr)
+        {
+            if (active)
+                edit.pendingMutation = { type, property, isChildEvent, wasAdded, true };
+        }
+
+        ~ScopedPendingMutation()
+        {
+            if (active)
+                edit.pendingMutation.isSet = false;
+        }
+    };
+
     void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i) override
     {
-        // BSV-2473 step 0b: capture once here, not at each of the ~25 restart() branches
-        // below. Gated so a Release library (debugLog always null) does zero extra work.
-        if (TransportControl::debugLog != nullptr)
-            edit.pendingMutation = { v.getType(), i, false, false, true };
+        const ScopedPendingMutation pendingMutationGuard (edit, v.getType(), i, false, false);
 
         if (v.hasType (IDs::TRANSPORT))
         {
@@ -310,10 +331,7 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
 
     void childAddedOrRemoved (juce::ValueTree& p, juce::ValueTree& c, bool wasAdded)
     {
-        // BSV-2473 step 0b: capture once here, not at each restart() branch below.
-        // Gated so a Release library (debugLog always null) does zero extra work.
-        if (TransportControl::debugLog != nullptr)
-            edit.pendingMutation = { c.getType(), {}, true, wasAdded, true };
+        const ScopedPendingMutation pendingMutationGuard (edit, c.getType(), {}, true, wasAdded);
 
         if (c.hasType (IDs::NOTE)
              || c.hasType (IDs::CONTROL)
@@ -1241,36 +1259,26 @@ void Edit::restartPlayback()
 
     ++rebuildRequestCount;
 
-    // BSV-2473 step 0b: classify this request's trigger — pendingMutation.isSet
-    // means a TreeWatcher callback set it moments ago (this call came from one
-    // of its ~25 restart() branches); unset means one of the 31 direct callers
-    // elsewhere in this file. Read-and-clear so a later, unrelated direct call
-    // never inherits a stale TreeWatcher context. Gated: Release does zero work.
+    // BSV-2473 step 0b (delta S0b-2): classify this request's trigger by
+    // Identifier comparison (pointer-equality, no allocation) — pendingMutation
+    // is true only for the dynamic extent of a TreeWatcher callback (see
+    // ScopedPendingMutation); false means one of the 31 direct callers
+    // elsewhere in this file. Gated: Release does zero work.
     if (TransportControl::debugLog != nullptr)
     {
-        juce::String cause;
-
-        if (pendingMutation.isSet)
-        {
-            cause = pendingMutation.type.toString();
-
-            if (pendingMutation.isChildEvent)
-                cause << (pendingMutation.wasAdded ? ".child+" : ".child-");
-            else
-                cause << "." << pendingMutation.property.toString();
-        }
-        else
-        {
-            cause = "direct";
-        }
-
-        pendingMutation.isSet = false;
+        const bool isDirect = ! pendingMutation.isSet;
+        const juce::Identifier causeType = isDirect ? juce::Identifier() : pendingMutation.type;
+        const juce::Identifier causeProperty = (isDirect || pendingMutation.isChildEvent) ? juce::Identifier() : pendingMutation.property;
+        const bool causeIsChildEvent = ! isDirect && pendingMutation.isChildEvent;
+        const bool causeWasAdded = causeIsChildEvent && pendingMutation.wasAdded;
 
         bool foundExisting = false;
 
         for (auto& slot : rebuildCauseSlots)
         {
-            if (slot.count > 0 && slot.label == cause)
+            if (slot.count > 0 && slot.isDirect == isDirect && slot.type == causeType
+                 && slot.property == causeProperty && slot.isChildEvent == causeIsChildEvent
+                 && slot.wasAdded == causeWasAdded)
             {
                 ++slot.count;
                 foundExisting = true;
@@ -1286,7 +1294,11 @@ void Edit::restartPlayback()
             {
                 if (slot.count == 0)
                 {
-                    slot.label = cause;
+                    slot.type = causeType;
+                    slot.property = causeProperty;
+                    slot.isChildEvent = causeIsChildEvent;
+                    slot.wasAdded = causeWasAdded;
+                    slot.isDirect = isDirect;
                     slot.count = 1;
                     foundFreeSlot = true;
                     break;
@@ -1903,8 +1915,11 @@ void Edit::timerCallback()
         if (this == TransportControl::mainMusicEdit && TransportControl::debugLog != nullptr)
         {
             // BSV-2473 step 0b: causes= names the ValueTree type/property (or
-            // "direct") behind each coalesced request. Capped at 8 shown + a
-            // "+N more" tail — AudioEngineLog::emit's body is 1024 bytes.
+            // "direct") behind each coalesced request — label built here at
+            // flush time (delta S0b-2), not per-request. Capped at 8 shown;
+            // "+N causes,+M dropped" (delta S0b-3) keeps not-shown distinct
+            // from overflow-during-classification — AudioEngineLog::emit's
+            // body is 1024 bytes.
             juce::String causesStr;
             int shown = 0, totalActive = 0;
 
@@ -1920,15 +1935,30 @@ void Edit::timerCallback()
                     if (shown > 0)
                         causesStr << ",";
 
-                    causesStr << slot.label << ":" << slot.count;
+                    if (slot.isDirect)
+                        causesStr << "direct";
+                    else
+                    {
+                        causesStr << slot.type.toString();
+
+                        if (slot.isChildEvent)
+                            causesStr << (slot.wasAdded ? ".child+" : ".child-");
+                        else
+                            causesStr << "." << slot.property.toString();
+                    }
+
+                    causesStr << ":" << slot.count;
                     ++shown;
                 }
             }
 
-            const int moreCount = (totalActive - shown) + rebuildCauseOverflowCount;
+            const int causesNotShown = totalActive - shown;
 
-            if (moreCount > 0)
-                causesStr << ",+" << moreCount << " more";
+            if (causesNotShown > 0)
+                causesStr << ",+" << causesNotShown << " causes";
+
+            if (rebuildCauseOverflowCount > 0)
+                causesStr << ",+" << rebuildCauseOverflowCount << " dropped";
 
             TransportControl::debugLog ("[RebuildFlush] armedAgeMs=%.1f requests=%d causes=%s",
                                          juce::Time::getMillisecondCounterHiRes() - rebuildArmedAtMs,

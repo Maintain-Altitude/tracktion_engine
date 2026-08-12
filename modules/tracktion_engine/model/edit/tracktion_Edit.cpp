@@ -95,18 +95,25 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
     Edit& edit;
     juce::ValueTree state;
 
-    // BSV-2473 step 0b (delta S0b-1): scopes Edit::pendingMutation.isSet to this
-    // callback's dynamic extent, so restartPlayback() sees it only when called
-    // synchronously from within (i.e. one of the ~25 restart() branches) —
-    // never left set for a later, unrelated direct caller to misattribute to.
+    // BSV-2473 step 0b (delta S0b-1, S0b-5): scopes Edit::pendingMutation to this
+    // callback's dynamic extent so restartPlayback() sees it only when called
+    // synchronously from within (i.e. one of the ~25 restart() branches) — and
+    // saves/restores (not clears) on exit, since EditItemID::readOrCreateNewID
+    // (called from childAddedOrRemoved's add branches, before restart()) writes
+    // an ID property that fires a NESTED valueTreePropertyChanged — an unguarded
+    // clear would destroy the outer add-event's context before the outer
+    // restart() reads it, misattributing every clip/plugin/track addition as
+    // "direct" (removals, which don't call readOrCreateNewID, would not be
+    // affected — an asymmetry that would look like real signal but isn't).
     struct ScopedPendingMutation
     {
         Edit& edit;
         bool active;
+        PendingMutation previous;
 
         ScopedPendingMutation (Edit& e, juce::Identifier type, juce::Identifier property,
                                bool isChildEvent, bool wasAdded)
-            : edit (e), active (TransportControl::debugLog != nullptr)
+            : edit (e), active (TransportControl::debugLog != nullptr), previous (e.pendingMutation)
         {
             if (active)
                 edit.pendingMutation = { type, property, isChildEvent, wasAdded, true };
@@ -115,7 +122,7 @@ struct Edit::TreeWatcher   : public juce::ValueTree::Listener
         ~ScopedPendingMutation()
         {
             if (active)
-                edit.pendingMutation.isSet = false;
+                edit.pendingMutation = previous;
         }
     };
 

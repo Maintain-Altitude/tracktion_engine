@@ -533,6 +533,80 @@ struct MemoryBufferReader  : public AudioFormatReaderWithTimeout
 };
 
 //==============================================================================
+// BSV-2473 step 2: alias slot reader — atomic-loads its data pointer once per
+// readSamples call (acquire), NOT once at construction like MemoryBufferReader.
+// This is what makes a message-thread repointAliasSlot() visible to a reader
+// already built into a live graph: MemoryBufferReader's sourceBuffer is copied
+// by value at construction and never re-read from the registry again, so a
+// registerMemoryBuffer() swap after that point is invisible to it (Finding 1).
+// Shape (numFrames/numChannels/sampleRate) is fixed for the slot's lifetime —
+// only the pointed-to data moves.
+//
+// Per-CALL-consistent, NOT per-block-consistent: one audio block can issue
+// several readSamples calls (loop wraps, and the Lagrange resampler's
+// read-ahead whenever file rate != output rate), so a repoint landing between
+// two calls in the same block yields part-old/part-new audio within that
+// block. This is accepted by design (REDESIGNED mechanism section item 1) —
+// correctness depends on the muted-window / audible-set-rejection guards at
+// the call sites, not on block atomicity this reader cannot provide lock-free.
+struct AliasSlotReader  : public AudioFormatReaderWithTimeout
+{
+    AliasSlotReader (std::shared_ptr<std::atomic<const float*>> ptr, int frames, int channels, double sr)
+        : dataPointer (std::move (ptr)), numFrames (frames)
+    {
+        sampleRate            = sr;
+        numChannels           = static_cast<unsigned int> (channels);
+        lengthInSamples       = static_cast<juce::int64> (frames);
+        usesFloatingPointData = true;
+        bitsPerSample         = 32;
+    }
+
+    void setReadTimeout (int) override {}
+
+    bool readSamples (int* const* destSamples, int numDestChannels,
+                      int startOffsetInDestBuffer,
+                      juce::int64 startSampleInFile,
+                      int numSamples) override
+    {
+        const float* base = dataPointer->load (std::memory_order_acquire);
+
+        if (base == nullptr)
+        {
+            // Unpointed slot (not yet bound, or repointed to release-time
+            // silence by an engine-side caller not using the shared silent
+            // buffer) — plain silence, no source view to read through.
+            for (int ch = 0; ch < numDestChannels; ++ch)
+                if (auto* d = destSamples[ch])
+                    juce::FloatVectorOperations::clear (reinterpret_cast<float*> (d) + startOffsetInDestBuffer, numSamples);
+            return true;
+        }
+
+        auto destOffset = static_cast<choc::buffer::FrameCount> (startOffsetInDestBuffer);
+        auto destEnd = static_cast<choc::buffer::FrameCount> (startOffsetInDestBuffer + numSamples);
+        auto srcStart = static_cast<choc::buffer::FrameCount> (startSampleInFile);
+        auto totalFrames = static_cast<choc::buffer::FrameCount> (numFrames);
+        auto srcAvailable = totalFrames - std::min (srcStart, totalFrames);
+
+        // usesFloatingPointData = true, so int** is really float**
+        auto dest = choc::buffer::createChannelArrayView (reinterpret_cast<float* const*> (destSamples),
+                                                          static_cast<choc::buffer::ChannelCount> (numDestChannels),
+                                                          destEnd)
+                        .getFrameRange ({ destOffset, destEnd });
+
+        auto fullView = choc::buffer::createInterleavedView (const_cast<float*> (base),
+                                                             numChannels, totalFrames);
+        auto src = fullView.getFrameRange ({ srcStart, srcStart + std::min (srcAvailable,
+                                                            static_cast<choc::buffer::FrameCount> (numSamples)) });
+
+        choc::buffer::copyIntersectionAndClearOutside (dest, src);
+        return true;
+    }
+
+    std::shared_ptr<std::atomic<const float*>> dataPointer;
+    int numFrames;
+};
+
+//==============================================================================
 struct AudioFileManager::KnownFile
 {
     KnownFile (const AudioFile& f)
@@ -546,9 +620,31 @@ struct AudioFileManager::KnownFile
     {
     }
 
+    // BSV-2473 step 2: alias slot constructor. Mutually exclusive with
+    // memoryBuffer above — dataPointer starts null (AliasSlotReader reads
+    // silence) until the first repointAliasSlot() call.
+    KnownFile (const AudioFile& f, AudioFileInfo i,
+               std::shared_ptr<std::atomic<const float*>> ptr)
+        : file (f), info (std::move (i)), aliasDataPointer (std::move (ptr))
+    {
+    }
+
     AudioFile file;
     AudioFileInfo info;
     std::optional<choc::buffer::InterleavedView<const float>> memoryBuffer;
+
+    // BSV-2473 step 2: set only for an alias slot. shared_ptr (not a bare
+    // atomic member) so an AliasSlotReader already handed out to a graph node
+    // keeps a valid, stable box to load from even if this KnownFile entry is
+    // torn down while that reader is still alive — the reader's own shared_ptr
+    // keeps the box (and whatever it currently points to) valid independent of
+    // this KnownFile's lifetime. This does NOT mean continuity across a
+    // teardown+re-register under the same name: createAliasSlot() always
+    // mints a fresh box via make_shared, so an old reader built before the
+    // teardown keeps loading from the orphaned original box, which nothing
+    // repoints again — that reader is expected to die with the graph rebuild
+    // teardown causes, not to pick up the new slot's future repoints.
+    std::shared_ptr<std::atomic<const float*>> aliasDataPointer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KnownFile)
 };
@@ -923,13 +1019,78 @@ void AudioFileManager::unregisterMemoryBuffer (const std::string& filename)
     removeFile (af.getHash());
 }
 
+// BSV-2473 step 2: removeFile() is variant-agnostic — it erases by hash
+// regardless of whether the KnownFile holds a plain memoryBuffer or an
+// aliasDataPointer, so this shares unregisterMemoryBuffer's exact body. Named
+// separately so alias-slot teardown callers aren't reaching for a function
+// named after the other variant (review finding, 2026-08-17).
+void AudioFileManager::unregisterAliasSlot (const std::string& name)
+{
+    AudioFile af (engine, juce::File (name));
+    removeFile (af.getHash());
+}
+
+// BSV-2473 step 2: creates a fixed-shape alias slot — message thread only,
+// pre-play (schedule/show setup). The data pointer starts null (silence) and
+// is set only via repointAliasSlot(). Shape is immutable for the slot's
+// lifetime; only the pointed-to data can change.
+void AudioFileManager::createAliasSlot (const std::string& name, int numFrames,
+                                        int numChannels, double sampleRate)
+{
+    AudioFile af (engine, juce::File (name));
+
+    AudioFileInfo info (engine);
+    info.wasParsedOk      = true;
+    info.hashCode         = af.getHash();
+    info.sampleRate       = sampleRate;
+    info.lengthInSamples  = static_cast<SampleCount> (numFrames);
+    info.numChannels      = numChannels;
+    info.bitsPerSample    = 32;
+    info.isFloatingPoint  = true;
+    info.needsCachedProxy = false;
+
+    auto ptr = std::make_shared<std::atomic<const float*>> (nullptr);
+
+    const juce::ScopedLock sl (knownFilesLock);
+    knownFiles[af.getHash()] = std::make_unique<KnownFile> (af, std::move (info), std::move (ptr));
+}
+
+// BSV-2473 step 2: atomically re-points an existing alias slot's data pointer.
+// Pure mechanism — the caller (engine side) has already resolved and validated
+// the source and computed the exact pointer to store; this call does not know
+// or care what the pointer refers to. Message thread only (takes the same lock
+// createMemoryReader takes, which the audio thread must never block on).
+// Returns false if `name` is not a registered alias slot.
+bool AudioFileManager::repointAliasSlot (const std::string& name, const float* dataPointer)
+{
+    AudioFile af (engine, juce::File (name));
+
+    const juce::ScopedLock sl (knownFilesLock);
+    auto it = knownFiles.find (af.getHash());
+
+    if (it == knownFiles.end() || it->second->aliasDataPointer == nullptr)
+        return false;
+
+    it->second->aliasDataPointer->store (dataPointer, std::memory_order_release);
+    return true;
+}
+
 std::unique_ptr<AudioFormatReaderWithTimeout> AudioFileManager::createMemoryReader (const AudioFile& file) const
 {
     const juce::ScopedLock sl (knownFilesLock);
 
     auto it = knownFiles.find (file.getHash());
 
-    if (it != knownFiles.end() && it->second->memoryBuffer.has_value())
+    if (it == knownFiles.end())
+        return {};
+
+    if (it->second->aliasDataPointer != nullptr)
+        return std::make_unique<AliasSlotReader> (it->second->aliasDataPointer,
+                                                   static_cast<int> (it->second->info.lengthInSamples),
+                                                   it->second->info.numChannels,
+                                                   it->second->info.sampleRate);
+
+    if (it->second->memoryBuffer.has_value())
         return std::make_unique<MemoryBufferReader> (*(it->second->memoryBuffer),
                                                      it->second->info.sampleRate);
 
@@ -938,7 +1099,15 @@ std::unique_ptr<AudioFormatReaderWithTimeout> AudioFileManager::createMemoryRead
 
 bool AudioFileManager::checkFileTime (KnownFile& f)
 {
-    if (f.memoryBuffer.has_value())
+    // BSV-2473 step 2 (review finding, 2026-08-17): an alias slot has no file
+    // on disk either, same as a plain memory buffer — without this guard it
+    // falls through to AudioFileInfo::parse() on a nonexistent synthetic path,
+    // clobbering the fixed shape (lengthInSamples/numChannels/sampleRate)
+    // createMemoryReader relies on to build every AliasSlotReader. Safe today
+    // only by an accident (AudioFileInfo's default-constructed
+    // fileModificationTime happens to equal a nonexistent file's), not by
+    // design — guard explicitly rather than rely on that.
+    if (f.memoryBuffer.has_value() || f.aliasDataPointer != nullptr)
         return false;
 
     if (! f.info.wasParsedOk

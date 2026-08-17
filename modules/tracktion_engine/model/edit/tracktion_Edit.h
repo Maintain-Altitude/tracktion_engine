@@ -367,8 +367,14 @@ public:
     /** Use this to tell the play engine to rebuild the audio graph if the toplogy has changed.
         You shouldn't normally need to use this as it's called automatically as
         track/clips/plugins etc. are added/removed/changed.
+
+        BSV-2473 step 0c: `site` optionally tags a direct (non-TreeWatcher) caller
+        for the [RebuildFlush] causes= histogram (e.g. "racktype-child"). Must be
+        a string literal / static-duration string — the histogram keeps the raw
+        pointer and compares by content at flush time, never copies or frees it.
+        Default nullptr preserves every untagged caller's behaviour exactly.
     */
-    void restartPlayback();
+    void restartPlayback (const char* site = nullptr);
 
     //==============================================================================
     /** Returns the TrackList for the Edit which contains all the top level tracks. */
@@ -930,6 +936,14 @@ private:
         juce::Identifier type, property;
         bool isChildEvent = false, wasAdded = false, isDirect = false;
         int count = 0;
+
+        // BSV-2473 step 0c: bisects the `direct` bucket by call site. Always a
+        // string literal (static duration) passed through from restartPlayback's
+        // `site` param, so the raw pointer is safe to hold across flushes with no
+        // ownership/lifetime concerns; compared by content (sameRebuildCauseSite),
+        // not identity, since two calls to the same named site are not guaranteed
+        // to share a literal's address across translation units.
+        const char* site = nullptr;
     };
     static constexpr int maxRebuildCauseSlots = 16;
     RebuildCauseSlot rebuildCauseSlots[maxRebuildCauseSlots];

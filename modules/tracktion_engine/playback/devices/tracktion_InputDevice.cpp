@@ -288,7 +288,7 @@ void InputDeviceInstance::updateRecordingStatus()
     }
 
     if (restartPlayback)
-        edit.restartPlayback();
+        edit.restartPlayback ("inputdevice-monitorchange");
 
     changedTargetTrackIDs.clear();
     destinationsChanged = false;

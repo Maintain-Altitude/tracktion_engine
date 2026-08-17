@@ -713,7 +713,7 @@ private:
             if (auto acb = dynamic_cast<AudioClipBase*> (&clip))
             {
                 acb->beginRenderingNewProxyIfNeeded();
-                clip.edit.restartPlayback();
+                clip.edit.restartPlayback ("compmanager-rendertimer");
             }
 
             clip.changed();
@@ -1459,7 +1459,7 @@ void MidiCompManager::triggerCompRender()
         clip.setCurrentTake (takeIndex);
 
     clip.changed();
-    clip.edit.restartPlayback();
+    clip.edit.restartPlayback ("compmanager-take");
 }
 
 void MidiCompManager::flattenTake (int takeIndex, bool /*deleteSourceFiles*/)

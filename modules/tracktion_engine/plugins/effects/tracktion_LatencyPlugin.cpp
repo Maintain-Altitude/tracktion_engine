@@ -140,7 +140,7 @@ LatencyPlugin::LatencyPlugin (PluginCreationInfo info)
 
     playbackRestartTimer.setCallback ([this]
                                       {
-                                          edit.restartPlayback();
+                                          edit.restartPlayback ("latencyplugin-restart");
                                           playbackRestartTimer.stopTimer();
                                       });
 }

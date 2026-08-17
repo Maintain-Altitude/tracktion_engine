@@ -1439,7 +1439,7 @@ void DeviceManager::prepareToStart()
             {
                 const EditPlaybackContext::ScopedDeviceListReleaser rebuilder (*c, true);
                 c->resyncToGlobalStreamTime ({ streamTime, streamTime + device->getCurrentBufferSizeSamples() / currentSampleRate }, currentSampleRate);
-                c->edit.restartPlayback();
+                c->edit.restartPlayback ("devicemanager-open");
             }
         }
 
@@ -1523,7 +1523,7 @@ void DeviceManager::reloadAllContextDevices()
     for (auto c : activeContexts)
     {
         const EditPlaybackContext::ScopedDeviceListReleaser rebuilder (*c, true);
-        c->edit.restartPlayback();
+        c->edit.restartPlayback ("devicemanager-reload");
     }
 }
 

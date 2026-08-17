@@ -302,7 +302,7 @@ void ControlSurface::userPressedRecEnable (int channelNum, bool enableEtoE)
                 }
 
                 if (activeDev.size() > 0 || inactiveDev.size() > 0)
-                    ed->restartPlayback();
+                    ed->restartPlayback ("controlsurface-recordenable");
             }
         }
     }

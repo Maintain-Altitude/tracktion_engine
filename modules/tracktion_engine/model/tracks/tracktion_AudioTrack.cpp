@@ -804,7 +804,7 @@ void AudioTrack::turnOffGuideNotes (MidiChannel midiChannel)
 void AudioTrack::addListener (Listener* l)
 {
     if (listeners.isEmpty())
-        edit.restartPlayback();
+        edit.restartPlayback ("audiotrack-addlistener");
 
     listeners.add (l);
 }

@@ -793,7 +793,7 @@ std::vector<std::unique_ptr<TransportControl::ScopedContextAllocator>> Transport
             tc->stopIfRecording();
         }
 
-        tc->edit.restartPlayback();
+        tc->edit.restartPlayback ("transportcontrol-restartall");
     }
 
     return restartHandles;

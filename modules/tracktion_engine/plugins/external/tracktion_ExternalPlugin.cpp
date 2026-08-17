@@ -87,7 +87,7 @@ private:
                     plugin.latencySeconds = plugin.latencySamples / plugin.sampleRate;
                 }
 
-                plugin.edit.restartPlayback(); // Restart playback to rebuild audio graph for the new latency to take effect
+                plugin.edit.restartPlayback ("externalplugin-latency"); // Restart playback to rebuild audio graph for the new latency to take effect
 
                 plugin.edit.getTransport().triggerClearDevicesOnStop(); // This will fully re-initialise plugins
             }
@@ -732,7 +732,7 @@ void ExternalPlugin::forceFullReinitialise()
         if (auto pi = getAudioPluginInstance(); pi->getSampleRate() > 0 && pi->getBlockSize() > 0)
             pi->prepareToPlay (pi->getSampleRate(), pi->getBlockSize());
 
-    edit.restartPlayback();
+    edit.restartPlayback ("externalplugin-init");
     SelectionManager::refreshAllPropertyPanelsShowing (*this);
 
     if (auto t = getOwnerTrack())
@@ -1863,7 +1863,7 @@ void ExternalPlugin::startPluginInstanceCreation (const juce::PluginDescription&
                                             // prepareToPlay to be called
                                             ep->sampleRate = {};
                                             ep->blockSizeSamples = {};
-                                            ep->edit.restartPlayback();
+                                            ep->edit.restartPlayback ("externalplugin-asyncinit");
                                         });
     }
     else

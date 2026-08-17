@@ -72,7 +72,7 @@ void TrackOutput::updateOutput()
             return;
     }
 
-    owner.edit.restartPlayback();
+    owner.edit.restartPlayback ("trackoutput-change");
     owner.changed();
     owner.setFrozen (false, Track::groupFreeze);
 }

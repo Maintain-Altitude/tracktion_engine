@@ -1398,14 +1398,14 @@ void RackTypeList::importRackFiles (const juce::Array<juce::File>& files)
 }
 
 //==============================================================================
-void RackType::triggerUpdate()
+void RackType::triggerUpdate (const char* site)
 {
     CRASH_TRACER
 
     if (edit.isLoading())
         return;
 
-    edit.restartPlayback();
+    edit.restartPlayback (site);
 }
 
 void RackType::updateRenderContext()
@@ -1415,32 +1415,46 @@ void RackType::updateRenderContext()
 }
 
 //==============================================================================
-void RackType::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&)
+// BSV-2473 cause 4: this listener is registered on the rack's own state tree
+// (addListener (this), above), so it fires for every descendant mutation —
+// including automation-curve POINT add/remove, which never changes the node
+// graph (RackNode.cpp only builds from PLUGININSTANCE/CONNECTION/INPUT/OUTPUT/
+// MODIFIERS). Denylist, not allowlist: a missed inert type costs one wasted
+// rebuild; a missed graph-relevant type would silently leave the graph stale,
+// which a rebuild-count check would score as success. Scope is deliberately
+// narrow to AUTOMATIONCURVE — the only subtree the capture measured firing.
+void RackType::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child)
 {
-    triggerUpdate();
+    if (parent.hasType (IDs::AUTOMATIONCURVE) || child.hasType (IDs::AUTOMATIONCURVE))
+        return;
+
+    triggerUpdate ("racktype-child-add");
 }
 
-void RackType::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int)
+void RackType::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int)
 {
-    triggerUpdate();
+    if (parent.hasType (IDs::AUTOMATIONCURVE) || child.hasType (IDs::AUTOMATIONCURVE))
+        return;
+
+    triggerUpdate ("racktype-child-remove");
 }
 
 void RackType::valueTreeChildOrderChanged (juce::ValueTree&, int, int)   {}
-void RackType::valueTreeRedirected (juce::ValueTree&)                    { triggerUpdate(); }
+void RackType::valueTreeRedirected (juce::ValueTree&)                    { triggerUpdate ("racktype-redirected"); }
 
 void RackType::valueTreeParentChanged (juce::ValueTree&)
 {
     if (! state.getParent().isValid())
         hideWindowForShutdown();
 
-    triggerUpdate();
+    triggerUpdate ("racktype-parent");
 }
 
 void RackType::valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& ident)
 {
     if (v.hasType (IDs::PLUGININSTANCE) || v.hasType (IDs::CONNECTION))
         if (ident != IDs::x && ident != IDs::y && ident != IDs::windowPos)
-            triggerUpdate();
+            triggerUpdate ("racktype-property");
 
     if (v == state && ident == IDs::name)
     {

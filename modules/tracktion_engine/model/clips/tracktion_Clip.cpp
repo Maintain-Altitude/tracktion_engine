@@ -801,7 +801,7 @@ AutomationCurveList* Clip::getAutomationCurveList (bool createIfNoItems)
 void Clip::addListener (Listener* l)
 {
     if (listeners.isEmpty())
-        edit.restartPlayback();
+        edit.restartPlayback ("clip-addlistener");
 
     listeners.add (l);
 }
@@ -811,7 +811,7 @@ void Clip::removeListener (Listener* l)
     listeners.remove (l);
 
     if (listeners.isEmpty())
-        edit.restartPlayback();
+        edit.restartPlayback ("clip-removelistener");
 }
 
 //==============================================================================

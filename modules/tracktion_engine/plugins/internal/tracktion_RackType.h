@@ -171,7 +171,10 @@ private:
     void addDefaultInputs();
     void addDefaultOutputs();
 
-    void triggerUpdate();
+    // BSV-2473 step 0c: no default — every caller names its own path (child
+    // add/remove vs. redirect/parent/property) so the histogram can tell them
+    // apart. See tracktion_RackType.cpp for the reason this matters.
+    void triggerUpdate (const char* site);
     void updateRenderContext();
 
     //==============================================================================

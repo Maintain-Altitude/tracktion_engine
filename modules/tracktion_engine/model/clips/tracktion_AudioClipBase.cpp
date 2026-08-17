@@ -2418,7 +2418,7 @@ void AudioClipBase::timerCallback()
         edit.engine.getAudioFileManager().releaseFile (newProxy);
 
     Selectable::changed();
-    edit.restartPlayback();
+    edit.restartPlayback ("audioclip-proxyready");
 }
 
 void AudioClipBase::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& id)

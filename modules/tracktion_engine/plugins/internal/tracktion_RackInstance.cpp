@@ -399,7 +399,7 @@ void RackInstance::setNumInputChannels (int num)
         createChannelMapping (channelMappings.size(), -1, -1);
 
     trimChannelMappingsToSize (needed);
-    edit.restartPlayback();
+    edit.restartPlayback ("rackinstance-inputchannels");
 }
 
 void RackInstance::setNumOutputChannels (int num)
@@ -413,7 +413,7 @@ void RackInstance::setNumOutputChannels (int num)
         createChannelMapping (channelMappings.size(), -1, -1);
 
     trimChannelMappingsToSize (needed);
-    edit.restartPlayback();
+    edit.restartPlayback ("rackinstance-outputchannels");
 }
 
 int RackInstance::getInputMapping (int channelIndex) const

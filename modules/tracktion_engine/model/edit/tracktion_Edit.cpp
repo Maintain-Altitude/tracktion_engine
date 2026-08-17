@@ -1253,7 +1253,21 @@ bool Edit::hasChangedSinceSaved() const
     return hasChanged;
 }
 
-void Edit::restartPlayback()
+// BSV-2473 step 0c: content comparison, not pointer identity — two calls
+// naming the same site are not guaranteed to share a literal's address
+// across translation units (though within one TU they reliably do).
+static bool sameRebuildCauseSite (const char* a, const char* b) noexcept
+{
+    if (a == b)
+        return true;
+
+    if (a == nullptr || b == nullptr)
+        return false;
+
+    return strcmp (a, b) == 0;
+}
+
+void Edit::restartPlayback (const char* site)
 {
     // BSV-2473 step 0 (hardening): counts, doesn't log per call — show-setup
     // bursts hit 345 requests in one frame, which would flood the 32 KB debug
@@ -1269,8 +1283,9 @@ void Edit::restartPlayback()
     // BSV-2473 step 0b (delta S0b-2): classify this request's trigger by
     // Identifier comparison (pointer-equality, no allocation) — pendingMutation
     // is true only for the dynamic extent of a TreeWatcher callback (see
-    // ScopedPendingMutation); false means one of the 31 direct callers
-    // elsewhere in this file. Gated: Release does zero work.
+    // ScopedPendingMutation); false means one of the 29 direct call sites
+    // spread across this file and 14 others (step 0c tags every one via
+    // `site`). Gated: Release does zero work.
     if (TransportControl::debugLog != nullptr)
     {
         const bool isDirect = ! pendingMutation.isSet;
@@ -1278,6 +1293,10 @@ void Edit::restartPlayback()
         const juce::Identifier causeProperty = (isDirect || pendingMutation.isChildEvent) ? juce::Identifier() : pendingMutation.property;
         const bool causeIsChildEvent = ! isDirect && pendingMutation.isChildEvent;
         const bool causeWasAdded = causeIsChildEvent && pendingMutation.wasAdded;
+        // BSV-2473 step 0c: site only means anything for a direct call — a
+        // TreeWatcher-attributed request never carries one, regardless of
+        // what the caller happened to pass.
+        const char* causeSite = isDirect ? site : nullptr;
 
         bool foundExisting = false;
 
@@ -1285,7 +1304,7 @@ void Edit::restartPlayback()
         {
             if (slot.count > 0 && slot.isDirect == isDirect && slot.type == causeType
                  && slot.property == causeProperty && slot.isChildEvent == causeIsChildEvent
-                 && slot.wasAdded == causeWasAdded)
+                 && slot.wasAdded == causeWasAdded && sameRebuildCauseSite (slot.site, causeSite))
             {
                 ++slot.count;
                 foundExisting = true;
@@ -1306,6 +1325,7 @@ void Edit::restartPlayback()
                     slot.isChildEvent = causeIsChildEvent;
                     slot.wasAdded = causeWasAdded;
                     slot.isDirect = isDirect;
+                    slot.site = causeSite;
                     slot.count = 1;
                     foundFreeSlot = true;
                     break;
@@ -1633,7 +1653,7 @@ void Edit::setCurrentMidiTimecodeSource (std::shared_ptr<MidiInputDevice> newDev
         midiTimecodeSourceDevice = newDevice->getDeviceID();
 
     updateMidiTimecodeDevices();
-    restartPlayback();
+    restartPlayback ("miditimecode-source");
 }
 
 void Edit::enableTimecodeSync (bool b)
@@ -1654,7 +1674,7 @@ void Edit::enableTimecodeSync (bool b)
         }
 
         updateMidiTimecodeDevices();
-        restartPlayback();
+        restartPlayback ("miditimecode-sync");
     }
 }
 
@@ -1665,7 +1685,7 @@ void Edit::setTimecodeOffset (TimeDuration newOffset)
         timecodeOffset = newOffset;
 
         updateMidiTimecodeDevices();
-        restartPlayback();
+        restartPlayback ("miditimecode-offset");
     }
 }
 
@@ -1682,7 +1702,7 @@ void Edit::setCurrentMidiMachineControlSource (std::shared_ptr<MidiInputDevice> 
         midiMachineControlSourceDevice = newDevice->getDeviceID();
 
     updateMidiTimecodeDevices();
-    restartPlayback();
+    restartPlayback ("midimachinecontrol-source");
 }
 
 MidiOutputDevice* Edit::getCurrentMidiMachineControlDest() const
@@ -1705,14 +1725,14 @@ void Edit::setCurrentMidiMachineControlDest (MidiOutputDevice* newDevice)
         midiMachineControlDestDevice = newDevice->getName();
 
     updateMidiTimecodeDevices();
-    restartPlayback();
+    restartPlayback ("midimachinecontrol-dest");
 }
 
 void Edit::setMidiTimecodeIgnoringHours (bool b)
 {
     midiTimecodeIgnoringHours = b;
     updateMidiTimecodeDevices();
-    restartPlayback();
+    restartPlayback ("miditimecode-hours");
 }
 
 void Edit::updateMidiTimecodeDevices()
@@ -1943,7 +1963,13 @@ void Edit::timerCallback()
                         causesStr << ",";
 
                     if (slot.isDirect)
+                    {
                         causesStr << "direct";
+
+                        // BSV-2473 step 0c: bisects the direct bucket by call site.
+                        if (slot.site != nullptr)
+                            causesStr << ":" << slot.site;
+                    }
                     else
                     {
                         causesStr << slot.type.toString();
@@ -2566,7 +2592,7 @@ void Edit::setLatencyCompensationEnabled (bool enabled)
     if (enabled != latencyCompensationEnabled)
     {
         latencyCompensationEnabled = enabled;
-        restartPlayback();
+        restartPlayback ("latency-compensation");
     }
 }
 
@@ -2651,7 +2677,7 @@ bool Edit::isClickTrackDevice (OutputDevice& dev) const
 void Edit::setClickTrackOutput (const juce::String& deviceName)
 {
     clickTrackDevice = deviceName;
-    restartPlayback();
+    restartPlayback ("clicktrack-output");
 }
 
 void Edit::setClickTrackVolume (float gain)

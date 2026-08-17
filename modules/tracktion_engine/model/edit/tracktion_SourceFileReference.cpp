@@ -255,7 +255,7 @@ void SourceFileReference::setToFile (const juce::File& file, PathStyle pathStyle
     }
 
     if (getFile() != oldFile)
-        edit.restartPlayback();
+        edit.restartPlayback ("sourcefileref-setfile");
 }
 
 void SourceFileReference::setToProjectFileReference (ProjectItemRef newID)
@@ -264,7 +264,7 @@ void SourceFileReference::setToProjectFileReference (ProjectItemRef newID)
     source = newID.toString();
 
     if (getFile() != oldFile)
-        edit.restartPlayback();
+        edit.restartPlayback ("sourcefileref-project");
 }
 
 } // namespace tracktion::inline engine

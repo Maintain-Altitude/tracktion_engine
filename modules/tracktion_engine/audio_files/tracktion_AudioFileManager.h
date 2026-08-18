@@ -56,12 +56,6 @@ public:
     /// false if `name` is not a registered alias slot. Message thread only.
     bool repointAliasSlot (const std::string& name, const float* dataPointer);
 
-    /// BSV-2473 step 2: tear down a previously created alias slot. Shares
-    /// unregisterMemoryBuffer's exact body (removeFile is variant-agnostic) —
-    /// named separately so alias-slot teardown callers aren't reaching for a
-    /// function named after the other variant.
-    void unregisterAliasSlot (const std::string& name);
-
     juce::AudioThumbnailCache& getAudioThumbnailCache()     { return *thumbnailCache; }
 
     Engine& engine;

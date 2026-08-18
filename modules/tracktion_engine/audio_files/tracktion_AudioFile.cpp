@@ -1019,17 +1019,6 @@ void AudioFileManager::unregisterMemoryBuffer (const std::string& filename)
     removeFile (af.getHash());
 }
 
-// BSV-2473 step 2: removeFile() is variant-agnostic — it erases by hash
-// regardless of whether the KnownFile holds a plain memoryBuffer or an
-// aliasDataPointer, so this shares unregisterMemoryBuffer's exact body. Named
-// separately so alias-slot teardown callers aren't reaching for a function
-// named after the other variant (review finding, 2026-08-17).
-void AudioFileManager::unregisterAliasSlot (const std::string& name)
-{
-    AudioFile af (engine, juce::File (name));
-    removeFile (af.getHash());
-}
-
 // BSV-2473 step 2: creates a fixed-shape alias slot — message thread only,
 // pre-play (schedule/show setup). The data pointer starts null (silence) and
 // is set only via repointAliasSlot(). Shape is immutable for the slot's
@@ -1037,6 +1026,13 @@ void AudioFileManager::unregisterAliasSlot (const std::string& name)
 void AudioFileManager::createAliasSlot (const std::string& name, int numFrames,
                                         int numChannels, double sampleRate)
 {
+    // BSV-2473 step 2 (coder delta, 2026-08-18): both alias entry points take
+    // knownFilesLock, the same lock createMemoryReader takes on the graph-build
+    // path — an audio-thread call would block on a lock the message thread can
+    // hold, a timing-dependent dropout. Fail fast in debug rather than glitch
+    // rarely on device.
+    TRACKTION_ASSERT_MESSAGE_THREAD
+
     AudioFile af (engine, juce::File (name));
 
     AudioFileInfo info (engine);
@@ -1063,6 +1059,8 @@ void AudioFileManager::createAliasSlot (const std::string& name, int numFrames,
 // Returns false if `name` is not a registered alias slot.
 bool AudioFileManager::repointAliasSlot (const std::string& name, const float* dataPointer)
 {
+    TRACKTION_ASSERT_MESSAGE_THREAD
+
     AudioFile af (engine, juce::File (name));
 
     const juce::ScopedLock sl (knownFilesLock);
@@ -1226,6 +1224,15 @@ void AudioFileManager::forceFileUpdate (const AudioFile& file)
 
     if (f != knownFiles.end())
     {
+        // BSV-2473 step 2 (coder delta, 2026-08-18): a memory buffer or alias
+        // slot has no file on disk either, same guard as checkFileTime() above
+        // — unconditional AudioFileInfo::parse() on a nonexistent synthetic
+        // path would destroy an alias slot's fixed shape (lengthInSamples/
+        // numChannels/sampleRate), which createMemoryReader relies on for
+        // every AliasSlotReader it builds.
+        if (f->second->memoryBuffer.has_value() || f->second->aliasDataPointer != nullptr)
+            return;
+
         f->second->info = AudioFileInfo::parse (f->second->file);
         releaseFile (file);
         callListeners (file);

@@ -815,6 +815,11 @@ void AudioTrack::removeListener (Listener* l)
     // N.B. Don't call restartPlayback here or it will be impossible to clear the audio graph
 }
 
+void AudioTrack::addGraphInternalListener (Listener* l)
+{
+    listeners.add (l);
+}
+
 //==============================================================================
 void AudioTrack::valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i)
 {

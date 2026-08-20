@@ -198,6 +198,10 @@ public:
     /** Removes a Listener. */
     void removeListener (Listener*);
 
+    /** Adds a Listener without Edit::restartPlayback, for a registrant that is itself
+        part of the graph currently being built (the restart would be self-referential). */
+    void addGraphInternalListener (Listener*);
+
     /** Returns the listener list so Nodes can manually call them. */
     juce::ListenerList<Listener>& getListeners()            { return listeners; }
 

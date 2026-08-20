@@ -18,7 +18,7 @@ LiveMidiInjectingNode::LiveMidiInjectingNode (AudioTrack& at, std::unique_ptr<tr
     setOptimisations ({ tracktion::graph::ClearBuffers::no,
                         tracktion::graph::AllocateAudioBuffer::no });
 
-    track->addListener (this);
+    track->addGraphInternalListener (this);
 }
 
 LiveMidiInjectingNode::~LiveMidiInjectingNode()
